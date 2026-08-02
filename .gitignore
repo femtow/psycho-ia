@@ -1,0 +1,29 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Secrets
+.env
+.env.*
+*.key
+
+# Données et fichiers patients
+Entree/
+Patients_test/
+
+# Images et documents
+*.jpg
+*.jpeg
+*.JPG
+*.JPEG
+*.heic
+*.HEIC
+*.png
+*.PNG
+*.pdf
+*.PDF
+
+# Sauvegardes automatiques
+*.bak
