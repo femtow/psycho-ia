@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from io import BytesIO
 from pathlib import Path
+from typing import Literal
 import base64
 import hashlib
 import json
@@ -20,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 # =========================================================
-# PRISE EN CHARGE DES PHOTOS IPHONE HEIC / HEIF
+# HEIC / HEIF
 # =========================================================
 
 register_heif_opener()
@@ -60,86 +61,159 @@ MAX_IMAGE_SIZE = (2400, 2400)
 JPEG_QUALITY = 92
 
 MAX_OUTPUT_TOKENS_OCR = 2000
-MAX_OUTPUT_TOKENS_EXTRACTION = 2000
+MAX_OUTPUT_TOKENS_EXTRACTION = 2500
+
+SCHEMA_VERSION = "2.0"
 
 
 # =========================================================
-# SCHÉMA DES DONNÉES CLINIQUES
+# SCHÉMA CLINIQUE V2
 # =========================================================
+
+class ElementContextualise(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contenu: str = Field(
+        description=(
+            "Contenu clinique proche de la formulation source."
+        )
+    )
+
+    contexte: str | None = Field(
+        description=(
+            "Situation ou contexte nécessaire pour comprendre "
+            "l'élément lorsqu'il est lu isolément. Null si aucun "
+            "contexte utile n'est disponible."
+        )
+    )
+
+
+class EmotionContextualisee(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contenu: str = Field(
+        description=(
+            "Émotion explicitement présente dans la note."
+        )
+    )
+
+    contexte: str | None = Field(
+        description=(
+            "Situation dans laquelle l'émotion apparaît. "
+            "Null si elle n'est pas identifiable."
+        )
+    )
+
+    intensite: str | None = Field(
+        description=(
+            "Intensité explicitement indiquée, par exemple 7/10. "
+            "Null si aucune intensité n'est indiquée."
+        )
+    )
+
+
+class CognitionContextualisee(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contenu: str = Field(
+        description=(
+            "Pensée, anticipation, croyance ou interprétation "
+            "en conservant autant que possible sa formulation source."
+        )
+    )
+
+    contexte: str | None = Field(
+        description=(
+            "Situation permettant de comprendre la cognition "
+            "lorsqu'elle est lue isolément."
+        )
+    )
+
+    referent_contextuel: str | None = Field(
+        description=(
+            "Personne ou objet auquel semble renvoyer un pronom "
+            "dans la cognition, lorsque le contexte permet de "
+            "l'identifier. Null si aucun référent n'est utile "
+            "ou suffisamment identifiable."
+        )
+    )
+
+    referent_explicitement_identifie: bool | None = Field(
+        description=(
+            "True si le référent est explicitement identifié dans "
+            "la formulation de la cognition elle-même. False si le "
+            "référent est seulement compris grâce au contexte. "
+            "Null s'il n'y a pas de référent contextuel."
+        )
+    )
+
 
 class DonneesCliniques(BaseModel):
-    """
-    Structure obligatoire du fichier JSON produit à partir
-    d'une transcription.
+    model_config = ConfigDict(extra="forbid")
 
-    extra="forbid" interdit au modèle d'ajouter des champs
-    non prévus.
-    """
-
-    model_config = ConfigDict(
-        extra="forbid"
+    schema_version: Literal["2.0"] = Field(
+        description="Version du schéma clinique."
     )
 
     date_seance: date | None = Field(
         description=(
             "Date explicite de la séance au format AAAA-MM-JJ. "
-            "Valeur null si elle est absente ou incertaine."
+            "Null si absente ou incertaine."
         )
     )
 
     faits_rapportes: list[str] = Field(
         description=(
-            "Faits, événements, symptômes, circonstances ou "
-            "expériences explicitement rapportés et ne relevant "
-            "pas plus précisément d'une autre catégorie."
+            "Faits, événements, symptômes ou circonstances "
+            "explicitement rapportés qui ne sont pas déjà mieux "
+            "représentés dans une autre catégorie."
         )
     )
 
-    emotions: list[str] = Field(
+    emotions: list[EmotionContextualisee] = Field(
         description=(
-            "Émotions explicitement indiquées, sans les déduire."
+            "Émotions explicitement présentes avec leur contexte "
+            "et leur intensité lorsqu'ils sont disponibles."
         )
     )
 
-    cognitions: list[str] = Field(
+    cognitions: list[CognitionContextualisee] = Field(
         description=(
-            "Pensées, anticipations, interprétations, croyances "
-            "ou images mentales explicitement présentes."
+            "Pensées, anticipations, croyances ou interprétations "
+            "avec le contexte nécessaire pour les comprendre."
         )
     )
 
-    comportements: list[str] = Field(
+    comportements: list[ElementContextualise] = Field(
         description=(
-            "Actions ou comportements observables explicitement "
-            "présents, hors évitements, interventions et tâches."
+            "Comportements observables explicitement présents."
         )
     )
 
-    evitements: list[str] = Field(
+    evitements: list[ElementContextualise] = Field(
         description=(
-            "Situations, sensations, pensées ou activités "
-            "explicitement évitées."
+            "Évitements explicitement présents."
         )
     )
 
     interventions: list[str] = Field(
         description=(
-            "Interventions, exercices ou stratégies proposés "
-            "ou réalisés dans le cadre thérapeutique."
+            "Interventions ou exercices thérapeutiques proposés "
+            "ou réalisés."
         )
     )
 
     taches_interseances: list[str] = Field(
         description=(
-            "Exercices, actions ou observations explicitement "
-            "demandés entre les séances."
+            "Tâches explicitement demandées entre les séances."
         )
     )
 
     elements_incertains: list[str] = Field(
         description=(
-            "Informations illisibles, ambiguës, contradictoires "
-            "ou dont la catégorisation reste incertaine."
+            "Éléments ambigus ou incertains. Les lignes contenant "
+            "des marqueurs OCR d'incertitude seront également "
+            "ajoutées automatiquement par Python."
         )
     )
 
@@ -149,10 +223,6 @@ class DonneesCliniques(BaseModel):
 # =========================================================
 
 def charger_client() -> OpenAI:
-    """
-    Charge la clé API depuis le fichier .env.
-    """
-
     if not ENV_PATH.exists():
         raise FileNotFoundError(
             f"Fichier .env introuvable : {ENV_PATH}"
@@ -164,8 +234,7 @@ def charger_client() -> OpenAI:
 
     if not api_key:
         raise RuntimeError(
-            "La variable OPENAI_API_KEY est absente ou vide "
-            "dans le fichier .env."
+            "OPENAI_API_KEY est absente ou vide dans .env."
         )
 
     return OpenAI(api_key=api_key)
@@ -174,13 +243,6 @@ def charger_client() -> OpenAI:
 def obtenir_client(
     cache_client: dict[str, OpenAI],
 ) -> OpenAI:
-    """
-    Ne charge le client OpenAI que lorsqu'un appel API
-    est réellement nécessaire.
-
-    Ainsi, si tous les fichiers existent déjà, aucune clé
-    n'est chargée et aucun appel n'est effectué.
-    """
 
     if "client" not in cache_client:
         cache_client["client"] = charger_client()
@@ -189,18 +251,10 @@ def obtenir_client(
 
 
 # =========================================================
-# NORMALISATION DES NOMS
+# OUTILS TEXTE
 # =========================================================
 
 def normaliser_texte(texte: str) -> str:
-    """
-    Supprime les accents, met en minuscules et remplace
-    les séparateurs par des espaces.
-
-    Exemple :
-    2026-08-01_PA → 2026 08 01 pa
-    """
-
     texte = unicodedata.normalize(
         "NFD",
         texte,
@@ -223,16 +277,237 @@ def normaliser_texte(texte: str) -> str:
     return texte.strip()
 
 
+def cle_dedoublonnage(texte: str) -> str:
+    """
+    Normalisation légère utilisée uniquement pour supprimer
+    des doublons stricts ou quasi stricts.
+    """
+
+    return " ".join(
+        normaliser_texte(texte).split()
+    )
+
+
 # =========================================================
-# CHARGEMENT DES PROFILS PATIENTS
+# GESTION DÉTERMINISTE DE L'INCERTITUDE OCR
+# =========================================================
+
+def ligne_contient_incertitude(
+    ligne: str,
+) -> bool:
+    """
+    Détecte les marqueurs produits par notre OCR.
+    """
+
+    ligne_minuscule = ligne.lower()
+
+    return (
+        "[illisible]" in ligne_minuscule
+        or "[mot incertain" in ligne_minuscule
+    )
+
+
+def separer_transcription_certaine_et_incertaine(
+    transcription: str,
+) -> tuple[str, list[str]]:
+    """
+    Règle volontairement conservatrice :
+
+    toute ligne contenant un marqueur OCR d'incertitude
+    est retirée du texte utilisé pour produire les catégories
+    certaines.
+
+    La ligne originale reste disponible dans
+    elements_incertains.
+
+    Ainsi :
+    "Sommeil difficile depuis [mot incertain : quelques] jours"
+
+    ne peut pas devenir :
+    "Sommeil difficile depuis quelques jours"
+
+    comme fait certain.
+    """
+
+    lignes_certaines: list[str] = []
+    lignes_incertaines: list[str] = []
+
+    for ligne in transcription.splitlines():
+        ligne_nettoyee = ligne.strip()
+
+        if not ligne_nettoyee:
+            lignes_certaines.append(ligne)
+            continue
+
+        if ligne_contient_incertitude(
+            ligne_nettoyee
+        ):
+            lignes_incertaines.append(
+                ligne_nettoyee
+            )
+        else:
+            lignes_certaines.append(ligne)
+
+    texte_certain = "\n".join(
+        lignes_certaines
+    ).strip()
+
+    return (
+        texte_certain,
+        lignes_incertaines,
+    )
+
+
+def ajouter_incertitudes_deterministes(
+    donnees: DonneesCliniques,
+    lignes_incertaines: list[str],
+) -> DonneesCliniques:
+    """
+    Les lignes incertaines détectées par Python sont ajoutées
+    quoi qu'ait répondu le modèle.
+    """
+
+    resultat: list[str] = []
+    deja_vus: set[str] = set()
+
+    for element in (
+        lignes_incertaines
+        + donnees.elements_incertains
+    ):
+        cle = cle_dedoublonnage(element)
+
+        if not cle:
+            continue
+
+        if cle in deja_vus:
+            continue
+
+        deja_vus.add(cle)
+        resultat.append(element)
+
+    return donnees.model_copy(
+        update={
+            "elements_incertains": resultat
+        }
+    )
+
+
+# =========================================================
+# DÉDOUBLONNAGE SIMPLE
+# =========================================================
+
+def dedoublonner_textes(
+    elements: list[str],
+) -> list[str]:
+
+    resultat: list[str] = []
+    deja_vus: set[str] = set()
+
+    for element in elements:
+        cle = cle_dedoublonnage(element)
+
+        if not cle:
+            continue
+
+        if cle in deja_vus:
+            continue
+
+        deja_vus.add(cle)
+        resultat.append(element)
+
+    return resultat
+
+
+def dedoublonner_donnees(
+    donnees: DonneesCliniques,
+) -> DonneesCliniques:
+    """
+    Retire uniquement les doublons déterministes.
+
+    On ne tente PAS de supprimer automatiquement deux phrases
+    simplement parce qu'elles semblent sémantiquement proches.
+    """
+
+    emotions: list[EmotionContextualisee] = []
+    cles_emotions: set[tuple] = set()
+
+    for element in donnees.emotions:
+        cle = (
+            cle_dedoublonnage(element.contenu),
+            cle_dedoublonnage(element.contexte or ""),
+            cle_dedoublonnage(element.intensite or ""),
+        )
+
+        if cle not in cles_emotions:
+            cles_emotions.add(cle)
+            emotions.append(element)
+
+    cognitions: list[CognitionContextualisee] = []
+    cles_cognitions: set[tuple] = set()
+
+    for element in donnees.cognitions:
+        cle = (
+            cle_dedoublonnage(element.contenu),
+            cle_dedoublonnage(element.contexte or ""),
+            cle_dedoublonnage(
+                element.referent_contextuel or ""
+            ),
+        )
+
+        if cle not in cles_cognitions:
+            cles_cognitions.add(cle)
+            cognitions.append(element)
+
+    comportements: list[ElementContextualise] = []
+    cles_comportements: set[tuple] = set()
+
+    for element in donnees.comportements:
+        cle = (
+            cle_dedoublonnage(element.contenu),
+            cle_dedoublonnage(element.contexte or ""),
+        )
+
+        if cle not in cles_comportements:
+            cles_comportements.add(cle)
+            comportements.append(element)
+
+    evitements: list[ElementContextualise] = []
+    cles_evitements: set[tuple] = set()
+
+    for element in donnees.evitements:
+        cle = (
+            cle_dedoublonnage(element.contenu),
+            cle_dedoublonnage(element.contexte or ""),
+        )
+
+        if cle not in cles_evitements:
+            cles_evitements.add(cle)
+            evitements.append(element)
+
+    return donnees.model_copy(
+        update={
+            "faits_rapportes": dedoublonner_textes(
+                donnees.faits_rapportes
+            ),
+            "emotions": emotions,
+            "cognitions": cognitions,
+            "comportements": comportements,
+            "evitements": evitements,
+            "interventions": dedoublonner_textes(
+                donnees.interventions
+            ),
+            "taches_interseances": dedoublonner_textes(
+                donnees.taches_interseances
+            ),
+        }
+    )
+
+
+# =========================================================
+# PROFILS PATIENTS
 # =========================================================
 
 def charger_patients() -> list[dict]:
-    """
-    Charge tous les fichiers profil.json présents dans
-    patients_test.
-    """
-
     if not PATIENTS_DIR.exists():
         raise FileNotFoundError(
             f"Dossier patients introuvable : {PATIENTS_DIR}"
@@ -240,11 +515,9 @@ def charger_patients() -> list[dict]:
 
     patients: list[dict] = []
 
-    profils = sorted(
+    for profil_path in sorted(
         PATIENTS_DIR.glob("*/profil.json")
-    )
-
-    for profil_path in profils:
+    ):
         try:
             with profil_path.open(
                 "r",
@@ -254,15 +527,13 @@ def charger_patients() -> list[dict]:
 
         except json.JSONDecodeError as erreur:
             raise ValueError(
-                f"JSON invalide dans : {profil_path}\n"
-                f"Détail : {erreur}"
+                f"JSON invalide : {profil_path}\n"
+                f"{erreur}"
             ) from erreur
 
-        identifiant = profil.get("identifiant")
-
-        if not identifiant:
+        if not profil.get("identifiant"):
             raise ValueError(
-                f"Identifiant absent dans : {profil_path}"
+                f"Identifiant absent : {profil_path}"
             )
 
         profil["dossier"] = profil_path.parent
@@ -271,29 +542,20 @@ def charger_patients() -> list[dict]:
 
     if not patients:
         raise RuntimeError(
-            "Aucun profil patient trouvé dans "
-            f"{PATIENTS_DIR}."
+            "Aucun profil patient trouvé."
         )
 
     return patients
 
 
 # =========================================================
-# IDENTIFICATION DU PATIENT
+# IDENTIFICATION PATIENT
 # =========================================================
 
 def identifier_patient_depuis_nom(
     fichier: Path,
     patients: list[dict],
 ) -> tuple[dict | None, list[dict]]:
-    """
-    Cherche les alias des patients dans le nom du fichier.
-
-    Retourne :
-    - le patient si une seule correspondance est trouvée ;
-    - None si aucune ou plusieurs correspondances existent ;
-    - la liste des correspondances trouvées.
-    """
 
     nom_normalise = normaliser_texte(
         fichier.stem
@@ -309,7 +571,7 @@ def identifier_patient_depuis_nom(
             [],
         )
 
-        correspondance_trouvee = False
+        correspondance = False
 
         for alias in alias_patient:
             alias_normalise = normaliser_texte(
@@ -319,13 +581,14 @@ def identifier_patient_depuis_nom(
             if not alias_normalise:
                 continue
 
-            alias_encadre = f" {alias_normalise} "
-
-            if alias_encadre in nom_encadre:
-                correspondance_trouvee = True
+            if (
+                f" {alias_normalise} "
+                in nom_encadre
+            ):
+                correspondance = True
                 break
 
-        if correspondance_trouvee:
+        if correspondance:
             correspondances.append(patient)
 
     if len(correspondances) == 1:
@@ -335,18 +598,12 @@ def identifier_patient_depuis_nom(
 
 
 # =========================================================
-# DÉTECTION DU VRAI FORMAT DE L'IMAGE
+# FORMAT IMAGE
 # =========================================================
 
 def detecter_format_reel(
     image_path: Path,
 ) -> tuple[str, str]:
-    """
-    Détecte le vrai format interne, indépendamment
-    de l'extension du fichier.
-
-    Un HEIC renommé en .jpg sera donc détecté comme HEIF.
-    """
 
     try:
         with Image.open(image_path) as image:
@@ -356,37 +613,29 @@ def detecter_format_reel(
 
     except Exception as erreur:
         raise ValueError(
-            "Le fichier ne peut pas être lu comme une image "
-            f"valide : {image_path.name}\n"
-            f"Détail technique : {erreur}"
+            f"Image invalide : {image_path.name}\n"
+            f"{erreur}"
         ) from erreur
 
-    if not format_reel:
-        raise ValueError(
-            "Le format réel de l'image ne peut pas être "
-            f"déterminé : {image_path.name}"
-        )
-
-    extension_reelle = EXTENSIONS_PAR_FORMAT.get(
+    extension = EXTENSIONS_PAR_FORMAT.get(
         format_reel
     )
 
-    if extension_reelle is None:
+    if extension is None:
         raise ValueError(
-            f"Format réel non pris en charge : {format_reel}"
+            f"Format non pris en charge : {format_reel}"
         )
 
-    return format_reel, extension_reelle
+    return format_reel, extension
 
 
 # =========================================================
-# EMPREINTES ET DOUBLONS
+# SHA-256 / DOUBLONS
 # =========================================================
 
-def calculer_sha256(fichier: Path) -> str:
-    """
-    Calcule l'empreinte SHA-256 d'un fichier.
-    """
+def calculer_sha256(
+    fichier: Path,
+) -> str:
 
     calcul = hashlib.sha256()
 
@@ -404,9 +653,6 @@ def fichiers_identiques(
     fichier_a: Path,
     fichier_b: Path,
 ) -> bool:
-    """
-    Vérifie que deux fichiers sont strictement identiques.
-    """
 
     if not fichier_a.exists():
         return False
@@ -414,7 +660,10 @@ def fichiers_identiques(
     if not fichier_b.exists():
         return False
 
-    if fichier_a.stat().st_size != fichier_b.stat().st_size:
+    if (
+        fichier_a.stat().st_size
+        != fichier_b.stat().st_size
+    ):
         return False
 
     return (
@@ -426,13 +675,6 @@ def fichiers_identiques(
 def obtenir_destination_unique(
     destination: Path,
 ) -> Path:
-    """
-    Évite d'écraser un fichier différent portant déjà
-    le même nom.
-
-    Exemple :
-    note.heic → note_2.heic
-    """
 
     if not destination.exists():
         return destination
@@ -440,9 +682,11 @@ def obtenir_destination_unique(
     compteur = 2
 
     while True:
-        nouvelle_destination = destination.with_name(
-            f"{destination.stem}_{compteur}"
-            f"{destination.suffix}"
+        nouvelle_destination = (
+            destination.with_name(
+                f"{destination.stem}_{compteur}"
+                f"{destination.suffix}"
+            )
         )
 
         if not nouvelle_destination.exists():
@@ -452,25 +696,18 @@ def obtenir_destination_unique(
 
 
 # =========================================================
-# COPIE DE L'ORIGINAL DANS LE DOSSIER PATIENT
+# ARCHIVAGE PHOTO
 # =========================================================
 
 def copier_dans_dossier_patient(
     fichier_source: Path,
     patient: dict,
 ) -> tuple[Path, bool, str]:
-    """
-    Copie l'image dans notes_originales en utilisant
-    l'extension correspondant à son vrai format.
 
-    Retourne :
-    - le chemin de l'image dans le dossier patient ;
-    - True si une nouvelle copie a été créée ;
-    - le vrai format détecté.
-    """
-
-    format_reel, extension_reelle = detecter_format_reel(
-        fichier_source
+    format_reel, extension_reelle = (
+        detecter_format_reel(
+            fichier_source
+        )
     )
 
     dossier_notes = (
@@ -511,22 +748,20 @@ def copier_dans_dossier_patient(
         destination,
     )
 
-    return destination, True, format_reel
+    return (
+        destination,
+        True,
+        format_reel,
+    )
 
 
 # =========================================================
-# CONVERSION TEMPORAIRE DE L'IMAGE POUR L'API
+# PRÉPARATION IMAGE POUR API
 # =========================================================
 
 def convertir_image_en_data_url(
     image_path: Path,
 ) -> str:
-    """
-    Corrige l'orientation, réduit la résolution et convertit
-    temporairement l'image en JPEG en mémoire.
-
-    L'original n'est jamais modifié.
-    """
 
     try:
         with Image.open(image_path) as image:
@@ -566,20 +801,12 @@ def convertir_image_en_data_url(
 
     except Exception as erreur:
         raise ValueError(
-            "Impossible de préparer l'image pour l'API : "
-            f"{image_path}\n"
-            f"Détail : {erreur}"
+            f"Impossible de préparer l'image : {erreur}"
         ) from erreur
 
-    if not donnees_jpeg:
-        raise ValueError(
-            "La conversion a produit une image vide."
-        )
-
-    taille_ko = len(donnees_jpeg) / 1024
-
     print(
-        f"    Taille envoyée : {taille_ko:.1f} Ko"
+        f"    Taille envoyée : "
+        f"{len(donnees_jpeg) / 1024:.1f} Ko"
     )
 
     contenu_base64 = base64.b64encode(
@@ -593,73 +820,50 @@ def convertir_image_en_data_url(
 
 
 # =========================================================
-# CHEMINS DES FICHIERS PRODUITS
+# CHEMINS PRODUITS
 # =========================================================
 
 def obtenir_chemin_transcription(
     image_path: Path,
 ) -> Path:
-    """
-    Retourne le chemin du fichier de transcription.
-    """
 
-    dossier_patient = image_path.parent.parent
-
-    dossier_transcriptions = (
-        dossier_patient
+    dossier = (
+        image_path.parent.parent
         / "transcriptions"
     )
 
-    dossier_transcriptions.mkdir(
+    dossier.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    return (
-        dossier_transcriptions
-        / f"{image_path.stem}.txt"
-    )
+    return dossier / f"{image_path.stem}.txt"
 
 
 def obtenir_chemin_donnees_cliniques(
     image_path: Path,
 ) -> Path:
-    """
-    Retourne le chemin du fichier JSON clinique.
-    """
 
-    dossier_patient = image_path.parent.parent
-
-    dossier_donnees = (
-        dossier_patient
+    dossier = (
+        image_path.parent.parent
         / "donnees_cliniques"
     )
 
-    dossier_donnees.mkdir(
+    dossier.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    return (
-        dossier_donnees
-        / f"{image_path.stem}.json"
-    )
+    return dossier / f"{image_path.stem}.json"
 
 
 # =========================================================
-# VÉRIFICATION DES FICHIERS EXISTANTS
+# VALIDITÉ DES PRODUITS EXISTANTS
 # =========================================================
 
 def transcription_valide(
     transcription_path: Path,
 ) -> bool:
-    """
-    Une transcription est considérée valide lorsqu'elle
-    existe et contient du texte.
-    """
-
-    if not transcription_path.exists():
-        return False
 
     if not transcription_path.is_file():
         return False
@@ -680,17 +884,10 @@ def donnees_cliniques_valides(
     transcription_path: Path,
 ) -> bool:
     """
-    Vérifie que le JSON :
-    - existe ;
-    - respecte le schéma Pydantic ;
-    - n'est pas plus ancien que la transcription.
-
-    Si la transcription est corrigée manuellement après
-    l'extraction, le JSON sera donc régénéré.
+    Les anciens JSON V1 seront automatiquement considérés
+    comme invalides puisqu'ils n'ont pas schema_version=2.0
+    et n'utilisent pas le nouveau schéma contextualisé.
     """
-
-    if not json_path.exists():
-        return False
 
     if not json_path.is_file():
         return False
@@ -700,37 +897,36 @@ def donnees_cliniques_valides(
             encoding="utf-8-sig"
         )
 
-        DonneesCliniques.model_validate_json(
-            contenu
+        donnees = (
+            DonneesCliniques.model_validate_json(
+                contenu
+            )
         )
+
+        if donnees.schema_version != SCHEMA_VERSION:
+            return False
 
     except Exception:
         return False
 
     if transcription_path.exists():
-        date_json = json_path.stat().st_mtime
-        date_transcription = (
+        if (
             transcription_path.stat().st_mtime
-        )
-
-        if date_transcription > date_json:
+            > json_path.stat().st_mtime
+        ):
             return False
 
     return True
 
 
 # =========================================================
-# TRANSCRIPTION OCR
+# OCR
 # =========================================================
 
 def transcrire_image(
     client: OpenAI,
     image_path: Path,
 ):
-    """
-    Envoie l'image à GPT-5.6 Terra et demande une
-    transcription fidèle, sans analyse clinique.
-    """
 
     image_data_url = convertir_image_en_data_url(
         image_path
@@ -764,18 +960,15 @@ def transcrire_image(
                             "- Ne complète aucune information absente.\n"
                             "- N'invente aucun mot.\n"
                             "- Ne corrige pas les formulations.\n"
-                            "- Conserve les accents tels qu'ils sont lus.\n"
-                            "- Conserve autant que possible les titres, "
-                            "les paragraphes, les listes, la ponctuation "
-                            "et les symboles présents sur la note.\n"
-                            "- Écris [illisible] lorsqu'un passage ne "
-                            "peut pas être lu avec suffisamment de "
-                            "certitude.\n"
+                            "- Conserve les titres, paragraphes, "
+                            "listes, ponctuation et symboles.\n"
+                            "- Écris [illisible] lorsqu'un passage "
+                            "ne peut pas être lu avec suffisamment "
+                            "de certitude.\n"
                             "- Écris [mot incertain : proposition] "
                             "lorsqu'un mot semble probable mais reste "
                             "incertain.\n"
-                            "- Retourne uniquement la transcription, "
-                            "sans introduction ni commentaire."
+                            "- Retourne uniquement la transcription."
                         ),
                     },
                     {
@@ -792,8 +985,7 @@ def transcrire_image(
 
     if not transcription:
         raise RuntimeError(
-            "GPT-5.6 Terra n'a retourné aucune "
-            "transcription."
+            "Aucune transcription retournée."
         )
 
     return transcription, reponse
@@ -803,9 +995,6 @@ def enregistrer_transcription(
     transcription_path: Path,
     transcription: str,
 ) -> None:
-    """
-    Enregistre la transcription en UTF-8.
-    """
 
     transcription_path.write_text(
         transcription,
@@ -816,15 +1005,12 @@ def enregistrer_transcription(
 def lire_transcription(
     transcription_path: Path,
 ) -> str:
-    """
-    Lit une transcription existante.
-    """
 
     if not transcription_valide(
         transcription_path
     ):
         raise ValueError(
-            "La transcription est absente ou vide : "
+            f"Transcription absente ou vide : "
             f"{transcription_path}"
         )
 
@@ -834,7 +1020,7 @@ def lire_transcription(
 
 
 # =========================================================
-# EXTRACTION CLINIQUE STRUCTURÉE
+# EXTRACTION CLINIQUE V2
 # =========================================================
 
 def extraire_donnees_cliniques(
@@ -842,56 +1028,117 @@ def extraire_donnees_cliniques(
     transcription: str,
 ):
     """
-    Transforme la transcription en données cliniques
-    structurées, sans analyse fonctionnelle.
+    Les lignes comportant une incertitude OCR ne sont PAS
+    fournies au modèle pour les catégories certaines.
+
+    C'est Python, ensuite, qui les ajoute à
+    elements_incertains.
     """
 
-    prompt_systeme = (
-        "Tu extrais des informations structurées à partir "
-        "d'une transcription de notes de séance de "
-        "psychothérapie.\n\n"
+    (
+        transcription_certaine,
+        lignes_incertaines,
+    ) = separer_transcription_certaine_et_incertaine(
+        transcription
+    )
 
-        "Tu dois rester strictement fidèle au texte source.\n\n"
+    prompt_systeme = (
+        "Tu structures des notes de séance de psychothérapie.\n\n"
+
+        "Tu ne disposes ici que des lignes considérées comme "
+        "suffisamment certaines par le système OCR.\n\n"
 
         "Règles impératives :\n"
+
+        f"- schema_version doit être exactement "
+        f"\"{SCHEMA_VERSION}\".\n"
+
         "- N'invente aucune information.\n"
         "- Ne pose aucun diagnostic.\n"
         "- Ne produis aucune analyse fonctionnelle.\n"
-        "- Ne déduis aucune émotion, cognition ou intention.\n"
-        "- Ne crée aucun lien causal absent de la note.\n"
-        "- Ne transforme pas une possibilité en certitude.\n"
-        "- Ne transforme pas une crainte en événement survenu.\n"
-        "- Ne transforme pas une proposition en tâche réalisée.\n"
-        "- Utilise des formulations courtes et proches du texte.\n"
-        "- Utilise une liste vide si une catégorie est absente.\n"
-        "- Normalise la date au format AAAA-MM-JJ uniquement "
-        "si elle est explicitement identifiable.\n"
-        "- Mets date_seance à null si la date est absente "
-        "ou incertaine.\n"
-        "- Une émotion est un état affectif, pas une pensée.\n"
-        "- Une cognition est une pensée, une anticipation, "
-        "une croyance ou une interprétation.\n"
-        "- Un évitement doit être explicitement indiqué.\n"
-        "- Les interventions concernent les exercices ou "
-        "stratégies proposés ou réalisés dans le cadre "
-        "thérapeutique.\n"
-        "- Les tâches interséances concernent uniquement ce "
-        "qui est explicitement demandé après la séance.\n"
-        "- Évite les doublons inutiles entre les catégories.\n"
-        "- Un même élément peut apparaître dans interventions "
-        "et taches_interseances seulement si le texte établit "
-        "clairement les deux fonctions.\n"
-        "- Place les passages [illisible] et [mot incertain] "
-        "dans elements_incertains.\n"
-        "- En cas de doute, place l'information dans "
-        "elements_incertains plutôt que de l'affirmer."
+        "- Ne crée aucun lien causal absent du texte.\n"
+        "- Ne transforme jamais une hypothèse en fait.\n"
+        "- Ne transforme jamais une crainte en événement survenu.\n"
+        "- Une information doit apparaître une seule fois dans "
+        "la catégorie clinique qui la représente le mieux.\n"
+        "- Ne crée pas une deuxième entrée uniquement pour "
+        "paraphraser ou expliciter la première.\n\n"
+
+        "RÈGLE DE CONTEXTE :\n"
+        "- Le champ contenu conserve la formulation clinique "
+        "elle-même.\n"
+        "- N'altère pas contenu uniquement pour résoudre un "
+        "pronom ou ajouter du contexte.\n"
+        "- Utilise contexte pour conserver les informations "
+        "nécessaires à la compréhension isolée de l'élément.\n\n"
+
+        "EXEMPLE :\n"
+        "Source : 'Dispute avec son responsable lundi. "
+        "Pensée : « il ne me respecte jamais ».'\n"
+        "La cognition doit conserver comme contenu : "
+        "'Il ne me respecte jamais'.\n"
+        "Son contexte peut être : "
+        "'Dispute avec son responsable lundi'.\n"
+        "referent_contextuel peut être 'responsable'.\n"
+        "referent_explicitement_identifie doit être false, "
+        "car le mot responsable n'est pas contenu dans la "
+        "cognition elle-même.\n"
+        "Ne crée surtout pas une deuxième cognition du type "
+        "'Le responsable ne le respecte jamais'.\n\n"
+
+        "ÉMOTIONS :\n"
+        "- Ne déduis jamais une émotion.\n"
+        "- Sépare son contenu, son contexte et son intensité.\n\n"
+
+        "COGNITIONS :\n"
+        "- Une cognition est une pensée, anticipation, croyance "
+        "ou interprétation explicitement présente.\n"
+        "- Un référent contextuel peut être renseigné lorsque "
+        "le contexte rend raisonnablement clair à qui renvoie "
+        "un pronom.\n"
+        "- Cela ne doit jamais modifier la formulation source.\n\n"
+
+        "COMPORTEMENTS ET ÉVITEMENTS :\n"
+        "- Ajoute le contexte nécessaire pour comprendre "
+        "l'action lorsqu'elle est lue isolément.\n"
+        "- Un évitement doit être explicitement présent.\n\n"
+
+        "INTERVENTIONS :\n"
+        "- Seulement les interventions ou exercices explicitement "
+        "proposés ou réalisés dans le cadre thérapeutique.\n\n"
+
+        "TÂCHES INTERSÉANCES :\n"
+        "- Classe comme tâche interséance une action ou un exercice "
+        "explicitement destiné à être réalisé après la séance.\n"
+        "- Une fréquence ou une échéance future explicite, par exemple "
+        "'trois fois cette semaine', 'chaque jour', 'avant la prochaine "
+        "séance' ou 'd'ici la prochaine séance', constitue un indice "
+        "suffisant qu'il s'agit d'une tâche interséance.\n"
+        "- Un exercice peut apparaître à la fois dans interventions et "
+        "taches_interseances s'il est proposé comme intervention puis "
+        "destiné à être réalisé entre les séances.\n"
+        "- Ne classe pas comme tâche interséance un exercice uniquement "
+        "discuté ou réalisé pendant la séance, sans indication qu'il "
+        "doit être poursuivi après celle-ci.\n"
+        "- Ne déduis pas une tâche interséance à partir d'une simple "
+        "intention ou possibilité.\n\n"
+
+        "FAITS RAPPORTÉS :\n"
+        "- N'y duplique pas une information déjà mieux représentée "
+        "dans emotions, cognitions, comportements ou evitements.\n\n"
+
+        "ELEMENTS INCERTAINS :\n"
+        "- N'invente pas d'incertitude supplémentaire.\n"
+        "- Le programme ajoutera lui-même les passages OCR "
+        "incertains après ta réponse."
     )
 
     prompt_utilisateur = (
-        "Voici la transcription à structurer :\n\n"
-        "----- DÉBUT DE LA TRANSCRIPTION -----\n"
-        f"{transcription}\n"
-        "----- FIN DE LA TRANSCRIPTION -----"
+        "Transcription constituée uniquement des lignes "
+        "considérées comme certaines :\n\n"
+        "----- DÉBUT -----\n"
+        f"{transcription_certaine}\n"
+        "----- FIN -----"
     )
 
     reponse = client.responses.parse(
@@ -924,35 +1171,38 @@ def extraire_donnees_cliniques(
         "status",
         None,
     ) == "incomplete":
-        details = getattr(
-            reponse,
-            "incomplete_details",
-            None,
-        )
 
         raise RuntimeError(
-            "La réponse d'extraction est incomplète. "
-            f"Détails : {details}"
+            "Réponse d'extraction incomplète."
         )
 
     donnees = reponse.output_parsed
 
     if donnees is None:
         raise RuntimeError(
-            "Le modèle n'a pas retourné de données "
-            "cliniques structurées valides."
+            "Aucune donnée structurée valide."
         )
 
-    return donnees, reponse
+    donnees = dedoublonner_donnees(
+        donnees
+    )
+
+    donnees = ajouter_incertitudes_deterministes(
+        donnees,
+        lignes_incertaines,
+    )
+
+    return (
+        donnees,
+        reponse,
+        lignes_incertaines,
+    )
 
 
 def enregistrer_donnees_cliniques(
     donnees: DonneesCliniques,
     json_path: Path,
 ) -> None:
-    """
-    Enregistre les données cliniques dans un JSON lisible.
-    """
 
     contenu = donnees.model_dump(
         mode="json"
@@ -970,15 +1220,12 @@ def enregistrer_donnees_cliniques(
 
 
 # =========================================================
-# UTILISATION DE L'API
+# TOKENS
 # =========================================================
 
 def obtenir_utilisation(
     reponse,
 ) -> tuple[int, int, int]:
-    """
-    Récupère les tokens indiqués par l'API.
-    """
 
     usage = getattr(
         reponse,
@@ -989,37 +1236,10 @@ def obtenir_utilisation(
     if usage is None:
         return 0, 0, 0
 
-    input_tokens = (
-        getattr(
-            usage,
-            "input_tokens",
-            0,
-        )
-        or 0
-    )
-
-    output_tokens = (
-        getattr(
-            usage,
-            "output_tokens",
-            0,
-        )
-        or 0
-    )
-
-    total_tokens = (
-        getattr(
-            usage,
-            "total_tokens",
-            0,
-        )
-        or 0
-    )
-
     return (
-        input_tokens,
-        output_tokens,
-        total_tokens,
+        getattr(usage, "input_tokens", 0) or 0,
+        getattr(usage, "output_tokens", 0) or 0,
+        getattr(usage, "total_tokens", 0) or 0,
     )
 
 
@@ -1028,14 +1248,12 @@ def ajouter_utilisation(
     categorie: str,
     reponse,
 ) -> tuple[int, int, int]:
-    """
-    Ajoute les tokens aux totaux globaux et aux sous-totaux
-    OCR ou extraction.
-    """
 
-    input_tokens, output_tokens, total_tokens = (
-        obtenir_utilisation(reponse)
-    )
+    (
+        input_tokens,
+        output_tokens,
+        total_tokens,
+    ) = obtenir_utilisation(reponse)
 
     statistiques["api_input_tokens"] += input_tokens
     statistiques["api_output_tokens"] += output_tokens
@@ -1061,35 +1279,30 @@ def ajouter_utilisation(
 
 
 # =========================================================
-# LISTE DES IMAGES À TRAITER
+# IMAGES D'ENTRÉE
 # =========================================================
 
 def obtenir_images_entree() -> list[Path]:
-    """
-    Retourne les images présentes dans entree.
-    """
 
     ENTREE_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    images = [
-        fichier
-        for fichier in ENTREE_DIR.iterdir()
-        if fichier.is_file()
-        and fichier.suffix.lower()
-        in EXTENSIONS_ENTREE
-    ]
-
     return sorted(
-        images,
+        [
+            fichier
+            for fichier in ENTREE_DIR.iterdir()
+            if fichier.is_file()
+            and fichier.suffix.lower()
+            in EXTENSIONS_ENTREE
+        ],
         key=lambda fichier: fichier.name.lower(),
     )
 
 
 # =========================================================
-# TRAITEMENT COMPLET D'UNE IMAGE
+# TRAITEMENT D'UNE IMAGE
 # =========================================================
 
 def traiter_image(
@@ -1098,14 +1311,6 @@ def traiter_image(
     cache_client: dict[str, OpenAI],
     statistiques: dict,
 ) -> None:
-    """
-    Exécute toute la chaîne pour une image :
-
-    1. Identification du patient
-    2. Archivage de l'original
-    3. Transcription si nécessaire
-    4. Extraction clinique si nécessaire
-    """
 
     print("\n" + "=" * 70)
     print(f"FICHIER : {fichier_source.name}")
@@ -1133,20 +1338,16 @@ def traiter_image(
 
         statistiques["ambigus"] += 1
 
-        identifiants = ", ".join(
-            correspondance["identifiant"]
-            for correspondance in correspondances
-        )
-
         print(
             "Résultat : identification ambiguë."
         )
+
         print(
-            f"Patients possibles : {identifiants}"
-        )
-        print(
-            "Le fichier reste dans entree et "
-            "n'est pas copié."
+            "Patients possibles : "
+            + ", ".join(
+                p["identifiant"]
+                for p in correspondances
+            )
         )
 
         return
@@ -1157,11 +1358,13 @@ def traiter_image(
         f"({patient.get('nom_affichage', '')})"
     )
 
-    image_patient, copie_creee, format_reel = (
-        copier_dans_dossier_patient(
-            fichier_source,
-            patient,
-        )
+    (
+        image_patient,
+        copie_creee,
+        format_reel,
+    ) = copier_dans_dossier_patient(
+        fichier_source,
+        patient,
     )
 
     print(
@@ -1180,6 +1383,7 @@ def traiter_image(
             "Photo identique déjà présente dans "
             "notes_originales."
         )
+
         print(
             f"Photo réutilisée : {image_patient}"
         )
@@ -1199,7 +1403,7 @@ def traiter_image(
     appel_effectue = False
 
     # -----------------------------------------------------
-    # ÉTAPE 1 : TRANSCRIPTION
+    # OCR
     # -----------------------------------------------------
 
     if transcription_valide(
@@ -1208,21 +1412,15 @@ def traiter_image(
         print(
             "\nTranscription valide déjà existante."
         )
+
         print(
             f"Fichier réutilisé : {transcription_path}"
         )
 
     else:
-        if transcription_path.exists():
-            print(
-                "\nLa transcription existante est vide "
-                "ou illisible. Elle va être recréée."
-            )
-
-        else:
-            print(
-                "\nAucune transcription existante."
-            )
+        print(
+            "\nAucune transcription valide existante."
+        )
 
         print(
             "Préparation et envoi de l'image à "
@@ -1275,14 +1473,8 @@ def traiter_image(
             f"Tokens totaux : {total_tokens}"
         )
 
-        print("\n--- ENREGISTREMENT OCR ---")
-        print(
-            f"Transcription créée : "
-            f"{transcription_path}"
-        )
-
     # -----------------------------------------------------
-    # ÉTAPE 2 : EXTRACTION CLINIQUE
+    # EXTRACTION CLINIQUE V2
     # -----------------------------------------------------
 
     transcription = lire_transcription(
@@ -1294,8 +1486,10 @@ def traiter_image(
         transcription_path,
     ):
         print(
-            "\nDonnées cliniques valides déjà existantes."
+            "\nDonnées cliniques V2 valides "
+            "déjà existantes."
         )
+
         print(
             f"Fichier réutilisé : {json_path}"
         )
@@ -1303,11 +1497,12 @@ def traiter_image(
     else:
         if json_path.exists():
             print(
-                "\nLe JSON clinique existant est invalide "
-                "ou plus ancien que la transcription."
+                "\nLe JSON existant utilise un ancien "
+                "schéma, est invalide ou est plus ancien "
+                "que la transcription."
             )
             print(
-                "Il va être régénéré."
+                "Il va être régénéré en schéma V2."
             )
 
         else:
@@ -1315,20 +1510,17 @@ def traiter_image(
                 "\nAucune extraction clinique existante."
             )
 
-        print(
-            "Extraction clinique structurée avec "
-            "GPT-5.6 Terra..."
-        )
-
         client = obtenir_client(
             cache_client
         )
 
-        donnees, reponse_extraction = (
-            extraire_donnees_cliniques(
-                client,
-                transcription,
-            )
+        (
+            donnees,
+            reponse_extraction,
+            lignes_incertaines,
+        ) = extraire_donnees_cliniques(
+            client,
+            transcription,
         )
 
         enregistrer_donnees_cliniques(
@@ -1352,25 +1544,35 @@ def traiter_image(
             reponse_extraction,
         )
 
-        donnees_affichage = donnees.model_dump(
-            mode="json"
-        )
-
         print(
-            "\n--- DONNÉES CLINIQUES ---\n"
+            "\n--- DONNÉES CLINIQUES V2 ---\n"
         )
 
         print(
             json.dumps(
-                donnees_affichage,
+                donnees.model_dump(
+                    mode="json"
+                ),
                 ensure_ascii=False,
                 indent=2,
             )
         )
 
+        if lignes_incertaines:
+            print(
+                "\n--- INCERTITUDES OCR "
+                "ISOLÉES PAR PYTHON ---"
+            )
+
+            for ligne in lignes_incertaines:
+                print(
+                    f"- {ligne}"
+                )
+
         print(
             "\n--- UTILISATION EXTRACTION ---"
         )
+
         print(
             f"Tokens d'entrée : {input_tokens}"
         )
@@ -1382,16 +1584,11 @@ def traiter_image(
         )
 
         print(
-            "\n--- ENREGISTREMENT EXTRACTION ---"
-        )
-        print(
-            f"JSON clinique créé : {json_path}"
+            f"\nJSON clinique créé : {json_path}"
         )
 
     if not appel_effectue:
-        statistiques[
-            "deja_complets"
-        ] += 1
+        statistiques["deja_complets"] += 1
 
         print(
             "\nTraitement déjà complet."
@@ -1399,12 +1596,7 @@ def traiter_image(
         print(
             "Aucun nouvel appel API n'a été effectué."
         )
-
     else:
-        statistiques[
-            "traitements_modifies"
-        ] += 1
-
         print(
             "\nTraitement terminé pour cette image."
         )
@@ -1415,15 +1607,11 @@ def traiter_image(
 # =========================================================
 
 def creer_statistiques() -> dict:
-    """
-    Crée les compteurs du programme.
-    """
 
     return {
         "photos_copiees": 0,
         "transcriptions_creees": 0,
         "extractions_creees": 0,
-        "traitements_modifies": 0,
         "deja_complets": 0,
         "non_identifies": 0,
         "ambigus": 0,
@@ -1446,9 +1634,6 @@ def creer_statistiques() -> dict:
 def afficher_resume(
     statistiques: dict,
 ) -> None:
-    """
-    Affiche le résumé global.
-    """
 
     print("\n" + "=" * 70)
     print("RÉSUMÉ DU TRAITEMENT")
@@ -1540,25 +1725,22 @@ def afficher_resume(
         f"{statistiques['api_total_tokens']}"
     )
 
-    print(
-        "\nLes fichiers originaux restent conservés "
-        "dans entree."
-    )
-
 
 # =========================================================
-# PROGRAMME PRINCIPAL
+# MAIN
 # =========================================================
 
 def main() -> None:
+
     print("=" * 70)
     print(
         "PSYCHO IA — CLASSEMENT, TRANSCRIPTION "
-        "ET EXTRACTION CLINIQUE"
+        "ET EXTRACTION CLINIQUE V2"
     )
     print("=" * 70)
 
     print(f"Modèle : {MODEL}")
+    print(f"Schéma clinique : {SCHEMA_VERSION}")
     print(f"Dossier d'entrée : {ENTREE_DIR}")
     print(f"Dossiers patients : {PATIENTS_DIR}")
 
@@ -1568,8 +1750,7 @@ def main() -> None:
 
         if not images:
             print(
-                "\nAucune image trouvée dans le "
-                "dossier entree."
+                "\nAucune image trouvée."
             )
             return
 
@@ -1580,8 +1761,6 @@ def main() -> None:
 
         statistiques = creer_statistiques()
 
-        # Le client OpenAI n'est chargé que lorsqu'un appel
-        # est réellement nécessaire.
         cache_client: dict[str, OpenAI] = {}
 
         for image in images:
