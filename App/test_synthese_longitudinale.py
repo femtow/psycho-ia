@@ -272,7 +272,7 @@ class SyntheseLongitudinale(BaseModel):
         ElementLongitudinal
     ]
 
-    interventions_realisees: list[
+    interventions_documentees: list[
         InterventionLongitudinale
     ]
 
@@ -695,18 +695,35 @@ def generer_synthese(
         "à la situation, décris prudemment cette évolution sans "
         "affirmer que le problème est résolu.\n\n"
 
-        "INTERVENTIONS RÉALISÉES :\n"
-        "- Recense les interventions présentes dans les sources.\n"
-        "- Regroupe les formulations manifestement équivalentes "
-        "sans perdre l'information temporelle.\n\n"
+        "INTERVENTIONS DOCUMENTÉES :\n"
+        "- Recense les interventions, exercices ou consignes explicitement "
+        "documentés dans les sources.\n"
+        "- Respecte leur statut : proposé, discuté ou réalisé lorsqu'il est "
+        "possible de le déterminer.\n"
+        "- Ne transforme pas une intervention proposée en intervention réalisée.\n"
+        "- Regroupe les formulations manifestement équivalentes sans perdre "
+        "l'information temporelle.\n\n"
 
         "RÉPONSE AUX INTERVENTIONS :\n"
         "- Ne renseigne ce champ que lorsqu'une séance ultérieure "
         "contient des éléments permettant d'observer ce qui s'est "
         "passé après une intervention ou une tâche.\n"
-        "- Une succession temporelle n'établit pas une causalité.\n"
-        "- Formule donc 'après la proposition de...' plutôt que "
-        "'grâce à...' lorsque la causalité n'est pas démontrée.\n\n"
+        "- Une succession temporelle n'établit jamais à elle seule "
+        "une causalité ni même la réalisation exacte de l'exercice proposé.\n"
+        "- Lorsque tu relies une intervention d'une séance à des éléments "
+        "rapportés lors d'une séance ultérieure, utilise normalement le "
+        "statut 'synthese_prudente'.\n"
+        "- Utilise 'explicite' uniquement si les données sources indiquent "
+        "elles-mêmes explicitement que l'élément observé constitue une "
+        "réponse à cette intervention précise.\n"
+        "- Écris 'après la proposition de l'exercice...' lorsque les données "
+        "indiquent seulement que l'exercice a été proposé.\n"
+        "- N'écris pas 'après l'exercice...' si sa réalisation exacte "
+        "n'est pas explicitement attestée.\n"
+        "- Ne suppose jamais que des trajets effectués ultérieurement avaient "
+        "la durée prescrite si cette durée n'est pas explicitement rapportée.\n"
+        "- Ne formule jamais 'grâce à', 'a entraîné', 'a permis' ou toute "
+        "autre causalité non explicitement soutenue.\n\n"
 
         "TÂCHES ACTUELLES :\n"
         "- Conserve les tâches interséances les plus récentes "
@@ -846,7 +863,7 @@ def verifier_dates_sources(
         )
 
     for element in (
-        synthese.interventions_realisees
+        synthese.interventions_documentees
     ):
         dates_utilisees.extend(
             element.dates_sources

@@ -37,7 +37,8 @@ ENTREE_DIR = BASE_DIR / "entree"
 PATIENTS_DIR = BASE_DIR / "patients_test"
 ENV_PATH = BASE_DIR / ".env"
 
-MODEL = "gpt-5.6-terra"
+MODEL_OCR = "gpt-5.6-sol"
+MODEL_EXTRACTION = "gpt-5.6-terra"
 
 EXTENSIONS_ENTREE = {
     ".jpg",
@@ -933,7 +934,7 @@ def transcrire_image(
     )
 
     reponse = client.responses.create(
-        model=MODEL,
+        model=MODEL_OCR,
 
         reasoning={
             "effort": "none",
@@ -974,7 +975,7 @@ def transcrire_image(
                     {
                         "type": "input_image",
                         "image_url": image_data_url,
-                        "detail": "high",
+                        "detail": "original",
                     },
                 ],
             }
@@ -1099,8 +1100,19 @@ def extraire_donnees_cliniques(
         "- Cela ne doit jamais modifier la formulation source.\n\n"
 
         "COMPORTEMENTS ET ÉVITEMENTS :\n"
-        "- Ajoute le contexte nécessaire pour comprendre "
-        "l'action lorsqu'elle est lue isolément.\n"
+        "- Conserve les comportements observables explicitement rapportés "
+        "lorsqu'ils sont cliniquement pertinents, notamment les actions, "
+        "leur fréquence ou leur répétition.\n"
+        "- Une information globale telle que 'a pris le tram trois fois "
+        "cette semaine' doit être conservée comme comportement même si "
+        "certains trajets sont décrits plus précisément ailleurs.\n"
+        "- Un comportement global et un évitement ponctuel ne sont pas "
+        "des doublons s'ils décrivent deux informations distinctes.\n"
+        "- En revanche, ne duplique pas exactement le même acte dans "
+        "comportements et evitements lorsque l'acte lui-même constitue "
+        "l'évitement.\n"
+        "- Ajoute le contexte nécessaire pour comprendre l'action "
+        "lorsqu'elle est lue isolément.\n"
         "- Un évitement doit être explicitement présent.\n\n"
 
         "INTERVENTIONS :\n"
@@ -1142,7 +1154,7 @@ def extraire_donnees_cliniques(
     )
 
     reponse = client.responses.parse(
-        model=MODEL,
+        model=MODEL_EXTRACTION,
 
         reasoning={
             "effort": "none",
@@ -1424,7 +1436,7 @@ def traiter_image(
 
         print(
             "Préparation et envoi de l'image à "
-            "GPT-5.6 Terra..."
+            f"{MODEL_OCR}..."
         )
 
         client = obtenir_client(
@@ -1739,7 +1751,8 @@ def main() -> None:
     )
     print("=" * 70)
 
-    print(f"Modèle : {MODEL}")
+    print(f"Modèle OCR : {MODEL_OCR}")
+    print(f"Modèle extraction : {MODEL_EXTRACTION}")
     print(f"Schéma clinique : {SCHEMA_VERSION}")
     print(f"Dossier d'entrée : {ENTREE_DIR}")
     print(f"Dossiers patients : {PATIENTS_DIR}")
