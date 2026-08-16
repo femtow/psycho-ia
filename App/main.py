@@ -2355,6 +2355,16 @@ def mettre_a_jour_synthese_longitudinale(
         )
     )
 
+    (
+        input_tokens,
+        output_tokens,
+        total_tokens,
+    ) = ajouter_utilisation(
+        statistiques,
+        "synthese",
+        reponse,
+    )
+
     dates_autorisees = (
         obtenir_dates_autorisees(
             seances
@@ -2387,16 +2397,6 @@ def mettre_a_jour_synthese_longitudinale(
     statistiques[
         "syntheses_creees"
     ] += 1
-
-    (
-        input_tokens,
-        output_tokens,
-        total_tokens,
-    ) = ajouter_utilisation(
-        statistiques,
-        "synthese",
-        reponse,
-    )
 
     print(
         "Synthèse longitudinale créée : "
@@ -2510,7 +2510,7 @@ def traiter_image(
     patients: list[dict],
     cache_client: dict[str, OpenAI],
     statistiques: dict,
-) -> None:
+) -> dict | None:
 
     print("\n" + "=" * 70)
     print(f"FICHIER : {fichier_source.name}")
@@ -2930,17 +2930,6 @@ def traiter_image(
             f"\nJSON clinique créé : {json_path}"
         )
 
-    synthese_api_effectuee = (
-        mettre_a_jour_synthese_longitudinale(
-            patient,
-            cache_client,
-            statistiques,
-        )
-    )
-
-    if synthese_api_effectuee:
-        appel_effectue = True
-
     if not appel_effectue:
         statistiques["deja_complets"] += 1
 
@@ -2954,6 +2943,97 @@ def traiter_image(
         print(
             "\nTraitement terminé pour cette image."
         )
+
+    return patient
+
+
+# =========================================================
+# TRAITEMENT D'UN LOT ET SYNTHÈSES PAR PATIENT
+# =========================================================
+
+def traiter_lot_images(
+    images: list[Path],
+    patients: list[dict],
+    cache_client: dict[str, OpenAI],
+    statistiques: dict,
+) -> None:
+    """
+    Traite toutes les images avant de mettre à jour une seule fois
+    la synthèse de chaque patient concerné.
+    """
+
+    patients_concernes: dict[
+        str,
+        dict,
+    ] = {}
+
+    for image in images:
+        try:
+            patient = traiter_image(
+                image,
+                patients,
+                cache_client,
+                statistiques,
+            )
+
+            if patient is not None:
+                patients_concernes[
+                    patient["identifiant"]
+                ] = patient
+
+        except Exception as erreur:
+            statistiques["erreurs"] += 1
+
+            print(
+                "\nERREUR POUR CE FICHIER :"
+            )
+
+            print(
+                f"{type(erreur).__name__}: "
+                f"{erreur}"
+            )
+
+            print(
+                "Le programme continue avec "
+                "les autres fichiers."
+            )
+
+    for identifiant in sorted(
+        patients_concernes
+    ):
+        patient = patients_concernes[
+            identifiant
+        ]
+
+        print("\n" + "=" * 70)
+        print(
+            "MISE À JOUR LONGITUDINALE : "
+            f"{identifiant}"
+        )
+
+        try:
+            mettre_a_jour_synthese_longitudinale(
+                patient,
+                cache_client,
+                statistiques,
+            )
+
+        except Exception as erreur:
+            statistiques["erreurs"] += 1
+
+            print(
+                "\nERREUR DE SYNTHÈSE POUR CE PATIENT :"
+            )
+
+            print(
+                f"{type(erreur).__name__}: "
+                f"{erreur}"
+            )
+
+            print(
+                "Le programme continue avec "
+                "les autres patients."
+            )
 
 
 # =========================================================
@@ -3187,31 +3267,12 @@ def main() -> None:
 
         cache_client: dict[str, OpenAI] = {}
 
-        for image in images:
-            try:
-                traiter_image(
-                    image,
-                    patients,
-                    cache_client,
-                    statistiques,
-                )
-
-            except Exception as erreur:
-                statistiques["erreurs"] += 1
-
-                print(
-                    "\nERREUR POUR CE FICHIER :"
-                )
-
-                print(
-                    f"{type(erreur).__name__}: "
-                    f"{erreur}"
-                )
-
-                print(
-                    "Le programme continue avec "
-                    "les autres fichiers."
-                )
+        traiter_lot_images(
+            images,
+            patients,
+            cache_client,
+            statistiques,
+        )
 
         afficher_resume(
             statistiques
