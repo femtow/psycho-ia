@@ -15,7 +15,7 @@ import unicodedata
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from PIL import Image, ImageOps
+from PIL import Image, ImageFilter, ImageOps
 from pillow_heif import register_heif_opener
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -61,6 +61,12 @@ EXTENSIONS_PAR_FORMAT = {
 MAX_IMAGE_SIZE = (2400, 2400)
 JPEG_QUALITY = 92
 
+PRETRAITEMENT_OCR_NIVEAUX_DE_GRIS = True
+OCR_AUTOCONTRAST_CUTOFF = 1
+OCR_SHARPEN_RADIUS = 1.2
+OCR_SHARPEN_PERCENT = 120
+OCR_SHARPEN_THRESHOLD = 2
+
 MAX_OUTPUT_TOKENS_OCR = 2000
 MAX_OUTPUT_TOKENS_EXTRACTION = 2500
 MAX_OUTPUT_TOKENS_SYNTHESE = 5000
@@ -73,6 +79,39 @@ SYNTHESIS_SCHEMA_VERSION = "1.1"
 MIN_SEANCES_SYNTHESE = 2
 
 NOMBRE_LIGNES_ENTETE_DATE = 5
+
+PROMPT_OCR = (
+    "Transcris exactement cette note "
+    "manuscrite de test.\n\n"
+
+    "Règles impératives :\n"
+    "- Ne résume pas.\n"
+    "- N'analyse pas le contenu.\n"
+    "- N'interprète pas les informations.\n"
+    "- Ne complète aucune information absente.\n"
+    "- N'invente aucun mot.\n"
+    "- Ne corrige pas les formulations.\n"
+    "- Conserve les titres, paragraphes, "
+    "listes, ponctuation et symboles.\n"
+    "- Écris [illisible] uniquement lorsqu'un passage "
+    "ne peut pas être lu avec suffisamment "
+    "de certitude.\n"
+    "- Une rature désigne une séquence volontairement "
+    "annulée par plusieurs traits ou une surcharge.\n"
+    "- Pour une zone ainsi raturée, conserve le texte "
+    "lisible autour et remplace uniquement la rature "
+    "par [illisible].\n"
+    "- Ne reconstruis jamais un texte raturé, "
+    "même si certains caractères semblent "
+    "reconnaissables.\n"
+    "- Un mot encore clairement lisible doit être "
+    "transcrit, même si son écriture est irrégulière "
+    "ou si un trait isolé le traverse.\n"
+    "- Écris [mot incertain : proposition] "
+    "lorsqu'un mot semble probable mais reste "
+    "incertain.\n"
+    "- Retourne uniquement la transcription."
+)
 
 MOTIF_DATE_NOM_FICHIER = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2})_"
@@ -1142,6 +1181,26 @@ def copier_dans_dossier_patient(
 # PRÉPARATION IMAGE POUR API
 # =========================================================
 
+def appliquer_pretraitement_ocr(
+    image: Image.Image,
+) -> Image.Image:
+
+    image = ImageOps.grayscale(image)
+    image = ImageOps.autocontrast(
+        image,
+        cutoff=OCR_AUTOCONTRAST_CUTOFF,
+    )
+    image = image.filter(
+        ImageFilter.UnsharpMask(
+            radius=OCR_SHARPEN_RADIUS,
+            percent=OCR_SHARPEN_PERCENT,
+            threshold=OCR_SHARPEN_THRESHOLD,
+        )
+    )
+
+    return image.convert("RGB")
+
+
 def convertir_image_en_data_url(
     image_path: Path,
 ) -> str:
@@ -1168,7 +1227,16 @@ def convertir_image_en_data_url(
                 f"    Dimensions envoyées : {image.size}"
             )
 
-            if image.mode != "RGB":
+            if PRETRAITEMENT_OCR_NIVEAUX_DE_GRIS:
+                image = appliquer_pretraitement_ocr(
+                    image
+                )
+                print(
+                    "    Prétraitement OCR : niveaux de gris, "
+                    "contraste et accentuation"
+                )
+
+            elif image.mode != "RGB":
                 image = image.convert("RGB")
 
             tampon = BytesIO()
@@ -1350,27 +1418,7 @@ def transcrire_image(
                 "content": [
                     {
                         "type": "input_text",
-                        "text": (
-                            "Transcris exactement cette note "
-                            "manuscrite de test.\n\n"
-
-                            "Règles impératives :\n"
-                            "- Ne résume pas.\n"
-                            "- N'analyse pas le contenu.\n"
-                            "- N'interprète pas les informations.\n"
-                            "- Ne complète aucune information absente.\n"
-                            "- N'invente aucun mot.\n"
-                            "- Ne corrige pas les formulations.\n"
-                            "- Conserve les titres, paragraphes, "
-                            "listes, ponctuation et symboles.\n"
-                            "- Écris [illisible] lorsqu'un passage "
-                            "ne peut pas être lu avec suffisamment "
-                            "de certitude.\n"
-                            "- Écris [mot incertain : proposition] "
-                            "lorsqu'un mot semble probable mais reste "
-                            "incertain.\n"
-                            "- Retourne uniquement la transcription."
-                        ),
+                        "text": PROMPT_OCR,
                     },
                     {
                         "type": "input_image",
