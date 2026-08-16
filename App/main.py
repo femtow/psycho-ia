@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Literal
@@ -63,8 +63,53 @@ JPEG_QUALITY = 92
 
 MAX_OUTPUT_TOKENS_OCR = 2000
 MAX_OUTPUT_TOKENS_EXTRACTION = 2500
+MAX_OUTPUT_TOKENS_SYNTHESE = 5000
+
+REASONING_EFFORT_SYNTHESE = "low"
 
 SCHEMA_VERSION = "2.0"
+SYNTHESIS_SCHEMA_VERSION = "1.1"
+
+MIN_SEANCES_SYNTHESE = 2
+
+NOMBRE_LIGNES_ENTETE_DATE = 5
+
+MOTIF_DATE_NOM_FICHIER = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})_"
+)
+
+MOTIFS_DATE_TRANSCRIPTION = (
+    re.compile(
+        r"(?<!\d)(?P<jour>\d{1,2})[-/.]"
+        r"(?P<mois>\d{1,2})[-/.]"
+        r"(?P<annee>\d{4})(?!\d)"
+    ),
+    re.compile(
+        r"(?<!\d)(?P<annee>\d{4})[-/.]"
+        r"(?P<mois>\d{1,2})[-/.]"
+        r"(?P<jour>\d{1,2})(?!\d)"
+    ),
+)
+
+
+class ErreurDateSeance(ValueError):
+    """Erreur déterministe liée à la date d'une séance."""
+
+
+class DateNomFichierInvalide(ErreurDateSeance):
+    """Le nom de fichier ne contient pas une date ISO valide."""
+
+
+class DateTranscriptionInvalide(ErreurDateSeance):
+    """L'en-tête OCR contient une date invalide ou ambiguë."""
+
+
+class DivergenceDateTranscription(ErreurDateSeance):
+    """La date OCR contredit la date déterministe du fichier."""
+
+
+class DivergenceDateDonneesCliniques(ErreurDateSeance):
+    """La date du JSON clinique contredit celle du fichier."""
 
 
 # =========================================================
@@ -220,6 +265,179 @@ class DonneesCliniques(BaseModel):
 
 
 # =========================================================
+# SCHÉMA DE SYNTHÈSE LONGITUDINALE
+# =========================================================
+
+StatutInformation = Literal[
+    "explicite",
+    "synthese_prudente",
+]
+
+
+class ElementLongitudinal(BaseModel):
+    """
+    Élément clinique synthétique avec traçabilité
+    vers les séances sources.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contenu: str = Field(
+        description=(
+            "Information clinique concise et compréhensible isolément."
+        )
+    )
+
+    statut: StatutInformation = Field(
+        description=(
+            "'explicite' si l'information apparaît directement dans les "
+            "données sources ; 'synthese_prudente' si elle résulte d'un "
+            "rapprochement prudent de plusieurs éléments explicites."
+        )
+    )
+
+    dates_sources: list[date] = Field(
+        description=(
+            "Dates des séances qui soutiennent directement cet élément."
+        )
+    )
+
+
+class EvolutionLongitudinale(BaseModel):
+    """
+    Évolution d'un domaine clinique dans le temps.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    domaine: str = Field(
+        description=(
+            "Domaine concerné par l'évolution, par exemple évitement des "
+            "transports ou anxiété dans le tram."
+        )
+    )
+
+    constat: str = Field(
+        description=(
+            "Description prudente de l'évolution observée."
+        )
+    )
+
+    direction: Literal[
+        "amelioration",
+        "aggravation",
+        "stable",
+        "fluctuation",
+        "indeterminee",
+    ]
+
+    statut: Literal["synthese_prudente"] = Field(
+        description=(
+            "Une évolution compare plusieurs séances et constitue donc "
+            "toujours une synthèse prudente."
+        )
+    )
+
+    dates_sources: list[date] = Field(
+        min_length=2,
+        description=(
+            "Au moins deux dates de séances distinctes soutenant "
+            "l'évolution."
+        ),
+    )
+
+
+class InterventionLongitudinale(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contenu: str
+
+    dates_sources: list[date]
+
+
+class PointAReprendre(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contenu: str = Field(
+        description=(
+            "Point pertinent à vérifier, préciser ou reprendre lors d'une "
+            "séance ultérieure."
+        )
+    )
+
+    motif: Literal[
+        "suivi_tache",
+        "evolution_a_verifier",
+        "information_manquante",
+        "element_incertain",
+    ]
+
+    dates_sources: list[date]
+
+
+class SyntheseLongitudinale(BaseModel):
+    """
+    Partie produite par GPT-5.6 Terra.
+
+    Pas de diagnostic ni d'analyse fonctionnelle à ce stade.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    problematiques_actuelles: list[ElementLongitudinal]
+
+    evolution: list[EvolutionLongitudinale]
+
+    emotions_actuelles: list[ElementLongitudinal]
+
+    cognitions_recurrentes: list[ElementLongitudinal]
+
+    comportements_significatifs: list[ElementLongitudinal]
+
+    evitements_actuels: list[ElementLongitudinal]
+
+    interventions_documentees: list[InterventionLongitudinale]
+
+    reponse_aux_interventions: list[ElementLongitudinal]
+
+    taches_actuelles: list[ElementLongitudinal]
+
+    elements_incertains: list[ElementLongitudinal]
+
+    points_a_reprendre: list[PointAReprendre]
+
+
+class MetadataSynthese(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1.1"]
+
+    patient_id: str
+
+    modele: str
+
+    genere_le: str
+
+    nombre_seances_integrees: int
+
+    date_premiere_seance: date
+
+    date_derniere_seance: date
+
+    fichiers_sources: list[str]
+
+    empreinte_sources_sha256: str
+
+
+class FichierSyntheseLongitudinale(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    metadata: MetadataSynthese
+
+    synthese: SyntheseLongitudinale
+
+
+# =========================================================
 # CLIENT OPENAI
 # =========================================================
 
@@ -286,6 +504,170 @@ def cle_dedoublonnage(texte: str) -> str:
 
     return " ".join(
         normaliser_texte(texte).split()
+    )
+
+
+# =========================================================
+# CONTRÔLE DÉTERMINISTE DE LA DATE DE SÉANCE
+# =========================================================
+
+def extraire_date_nom_fichier(
+    nom_fichier: str,
+) -> date:
+    """
+    Exige un préfixe AAAA-MM-JJ_ dans le nom du fichier.
+    """
+
+    nom_sans_extension = Path(
+        nom_fichier
+    ).stem
+
+    correspondance = (
+        MOTIF_DATE_NOM_FICHIER.match(
+            nom_sans_extension
+        )
+    )
+
+    if correspondance is None:
+        raise DateNomFichierInvalide(
+            "Le nom du fichier doit commencer par une date "
+            "valide au format AAAA-MM-JJ suivie d'un "
+            "soulignement."
+        )
+
+    date_texte = correspondance.group(
+        "date"
+    )
+
+    try:
+        return date.fromisoformat(
+            date_texte
+        )
+
+    except ValueError as erreur:
+        raise DateNomFichierInvalide(
+            "La date du nom de fichier est impossible : "
+            f"{date_texte}."
+        ) from erreur
+
+
+def extraire_date_entete_transcription(
+    transcription: str,
+) -> date | None:
+    """
+    Recherche une date numérique dans les premières lignes non vides.
+
+    Retourne None lorsque l'en-tête ne contient aucune date lisible.
+    """
+
+    lignes_entete = [
+        ligne.strip()
+        for ligne in transcription.splitlines()
+        if ligne.strip()
+    ][:NOMBRE_LIGNES_ENTETE_DATE]
+
+    dates_trouvees: set[date] = set()
+
+    for ligne in lignes_entete:
+        for motif in MOTIFS_DATE_TRANSCRIPTION:
+            for correspondance in motif.finditer(
+                ligne
+            ):
+                try:
+                    date_trouvee = date(
+                        int(
+                            correspondance.group(
+                                "annee"
+                            )
+                        ),
+                        int(
+                            correspondance.group(
+                                "mois"
+                            )
+                        ),
+                        int(
+                            correspondance.group(
+                                "jour"
+                            )
+                        ),
+                    )
+
+                except ValueError as erreur:
+                    raise DateTranscriptionInvalide(
+                        "L'en-tête de la transcription contient "
+                        "une date impossible."
+                    ) from erreur
+
+                dates_trouvees.add(
+                    date_trouvee
+                )
+
+    if not dates_trouvees:
+        return None
+
+    if len(dates_trouvees) > 1:
+        raise DateTranscriptionInvalide(
+            "L'en-tête de la transcription contient plusieurs "
+            "dates différentes."
+        )
+
+    return next(
+        iter(dates_trouvees)
+    )
+
+
+def verifier_date_transcription(
+    transcription: str,
+    date_attendue: date,
+) -> date | None:
+    """
+    Bloque toute contradiction entre l'en-tête OCR et le nom du fichier.
+    """
+
+    date_transcription = (
+        extraire_date_entete_transcription(
+            transcription
+        )
+    )
+
+    if (
+        date_transcription is not None
+        and date_transcription != date_attendue
+    ):
+        raise DivergenceDateTranscription(
+            "Divergence de date : le nom du fichier indique "
+            f"{date_attendue.isoformat()}, mais la transcription "
+            f"indique {date_transcription.isoformat()}."
+        )
+
+    return date_transcription
+
+
+def verifier_date_donnees_cliniques(
+    donnees: DonneesCliniques,
+    date_attendue: date,
+) -> DonneesCliniques:
+    """
+    Bloque une date contradictoire et complète une date absente.
+    """
+
+    if (
+        donnees.date_seance is not None
+        and donnees.date_seance != date_attendue
+    ):
+        raise DivergenceDateDonneesCliniques(
+            "Divergence de date : le nom du fichier indique "
+            f"{date_attendue.isoformat()}, mais le JSON clinique "
+            f"indique {donnees.date_seance.isoformat()}."
+        )
+
+    if donnees.date_seance == date_attendue:
+        return donnees
+
+    return donnees.model_copy(
+        update={
+            "date_seance": date_attendue
+        }
     )
 
 
@@ -880,9 +1262,32 @@ def transcription_valide(
     return bool(contenu)
 
 
+def charger_donnees_cliniques_existantes(
+    json_path: Path,
+) -> DonneesCliniques | None:
+
+    if not json_path.is_file():
+        return None
+
+    try:
+        contenu = json_path.read_text(
+            encoding="utf-8-sig"
+        )
+
+        return (
+            DonneesCliniques.model_validate_json(
+                contenu
+            )
+        )
+
+    except Exception:
+        return None
+
+
 def donnees_cliniques_valides(
     json_path: Path,
     transcription_path: Path,
+    date_attendue: date,
 ) -> bool:
     """
     Les anciens JSON V1 seront automatiquement considérés
@@ -890,24 +1295,19 @@ def donnees_cliniques_valides(
     et n'utilisent pas le nouveau schéma contextualisé.
     """
 
-    if not json_path.is_file():
+    donnees = (
+        charger_donnees_cliniques_existantes(
+            json_path
+        )
+    )
+
+    if donnees is None:
         return False
 
-    try:
-        contenu = json_path.read_text(
-            encoding="utf-8-sig"
-        )
+    if donnees.schema_version != SCHEMA_VERSION:
+        return False
 
-        donnees = (
-            DonneesCliniques.model_validate_json(
-                contenu
-            )
-        )
-
-        if donnees.schema_version != SCHEMA_VERSION:
-            return False
-
-    except Exception:
+    if donnees.date_seance != date_attendue:
         return False
 
     if transcription_path.exists():
@@ -975,7 +1375,7 @@ def transcrire_image(
                     {
                         "type": "input_image",
                         "image_url": image_data_url,
-                        "detail": "original",
+                        "detail": "high",
                     },
                 ],
             }
@@ -1027,6 +1427,7 @@ def lire_transcription(
 def extraire_donnees_cliniques(
     client: OpenAI,
     transcription: str,
+    date_attendue: date,
 ):
     """
     Les lignes comportant une incertitude OCR ne sont PAS
@@ -1053,6 +1454,11 @@ def extraire_donnees_cliniques(
 
         f"- schema_version doit être exactement "
         f"\"{SCHEMA_VERSION}\".\n"
+
+        "- date_seance doit être exactement "
+        f"\"{date_attendue.isoformat()}\". Cette date a été "
+        "établie et contrôlée par Python à partir du nom du fichier. "
+        "Ne la modifie pas et n'en déduis pas une autre depuis le texte.\n"
 
         "- N'invente aucune information.\n"
         "- Ne pose aucun diagnostic.\n"
@@ -1146,6 +1552,8 @@ def extraire_donnees_cliniques(
     )
 
     prompt_utilisateur = (
+        "Date de séance déterministe : "
+        f"{date_attendue.isoformat()}\n\n"
         "Transcription constituée uniquement des lignes "
         "considérées comme certaines :\n\n"
         "----- DÉBUT -----\n"
@@ -1229,6 +1637,786 @@ def enregistrer_donnees_cliniques(
         + "\n",
         encoding="utf-8",
     )
+
+
+# =========================================================
+# SYNTHÈSE LONGITUDINALE
+# =========================================================
+
+def obtenir_chemin_synthese_longitudinale(
+    patient: dict,
+) -> Path:
+
+    return (
+        patient["dossier"]
+        / "syntheses"
+        / "synthese_longitudinale.json"
+    )
+
+
+def obtenir_fichiers_cliniques_patient(
+    patient: dict,
+) -> list[Path]:
+
+    dossier = (
+        patient["dossier"]
+        / "donnees_cliniques"
+    )
+
+    if not dossier.exists():
+        return []
+
+    return sorted(
+        dossier.glob("*.json"),
+        key=lambda fichier: fichier.name.lower(),
+    )
+
+
+def charger_seances_longitudinales(
+    fichiers: list[Path],
+) -> tuple[
+    list[tuple[Path, DonneesCliniques]],
+    list[str],
+]:
+    """
+    Charge uniquement les JSON cliniques V2 datés.
+
+    Les fichiers invalides sont ignorés pour que le pipeline
+    multi-patients continue, mais ils sont affichés.
+    """
+
+    seances: list[
+        tuple[Path, DonneesCliniques]
+    ] = []
+
+    fichiers_ignores: list[str] = []
+
+    for fichier in fichiers:
+        try:
+            contenu = fichier.read_text(
+                encoding="utf-8-sig"
+            )
+
+            donnees = (
+                DonneesCliniques.model_validate_json(
+                    contenu
+                )
+            )
+
+            if (
+                donnees.schema_version
+                != SCHEMA_VERSION
+            ):
+                fichiers_ignores.append(
+                    f"{fichier.name} : schéma différent"
+                )
+                continue
+
+            if donnees.date_seance is None:
+                fichiers_ignores.append(
+                    f"{fichier.name} : date de séance absente"
+                )
+                continue
+
+        except Exception as erreur:
+            fichiers_ignores.append(
+                f"{fichier.name} : JSON clinique invalide ({erreur})"
+            )
+            continue
+
+        seances.append(
+            (
+                fichier,
+                donnees,
+            )
+        )
+
+    seances.sort(
+        key=lambda element:
+        element[1].date_seance
+    )
+
+    return seances, fichiers_ignores
+
+
+def calculer_empreinte_sources(
+    fichiers: list[Path],
+) -> str:
+    """
+    Calcule l'empreinte de l'ensemble exact des JSON sources.
+    """
+
+    calcul = hashlib.sha256()
+
+    for fichier in sorted(
+        fichiers,
+        key=lambda f: f.name.lower(),
+    ):
+        calcul.update(
+            fichier.name.encode("utf-8")
+        )
+        calcul.update(b"\0")
+        calcul.update(
+            fichier.read_bytes()
+        )
+        calcul.update(b"\0")
+
+    return calcul.hexdigest()
+
+
+def synthese_deja_a_jour(
+    output_path: Path,
+    empreinte_sources: str,
+) -> bool:
+
+    if not output_path.is_file():
+        return False
+
+    try:
+        contenu = output_path.read_text(
+            encoding="utf-8-sig"
+        )
+
+        fichier_synthese = (
+            FichierSyntheseLongitudinale
+            .model_validate_json(
+                contenu
+            )
+        )
+
+    except Exception:
+        return False
+
+    return (
+        fichier_synthese
+        .metadata
+        .empreinte_sources_sha256
+        == empreinte_sources
+    )
+
+
+def preparer_seances_pour_api(
+    seances: list[
+        tuple[Path, DonneesCliniques]
+    ],
+) -> str:
+
+    contenu = []
+
+    for _, donnees in seances:
+        contenu.append(
+            {
+                "date_seance": (
+                    donnees.date_seance.isoformat()
+                    if donnees.date_seance
+                    else None
+                ),
+                "donnees": donnees.model_dump(
+                    mode="json"
+                ),
+            }
+        )
+
+    return json.dumps(
+        contenu,
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def generer_synthese_longitudinale(
+    client: OpenAI,
+    seances: list[
+        tuple[Path, DonneesCliniques]
+    ],
+):
+
+    donnees_source = (
+        preparer_seances_pour_api(
+            seances
+        )
+    )
+
+    prompt_systeme = (
+        "Tu construis une synthèse longitudinale à partir "
+        "de données structurées issues de plusieurs séances "
+        "de psychothérapie.\n\n"
+
+        "Cette étape est une SYNTHÈSE CLINIQUE PRUDENTE. "
+        "Ce n'est ni un diagnostic ni une analyse "
+        "fonctionnelle complète.\n\n"
+
+        "RÈGLES FONDAMENTALES :\n"
+        "- Utilise exclusivement les informations fournies.\n"
+        "- N'invente aucune information.\n"
+        "- Ne pose aucun diagnostic.\n"
+        "- N'invente aucun antécédent.\n"
+        "- N'invente aucune causalité.\n"
+        "- N'invente aucune intention du patient.\n"
+        "- N'interprète pas l'absence d'une information comme "
+        "la preuve de son absence clinique.\n"
+        "- Conserve la distinction entre faits explicites et "
+        "synthèses prudentes.\n"
+        "- Toutes les dates_sources doivent correspondre à "
+        "des dates réellement présentes dans les données.\n\n"
+
+        "STATUT DES INFORMATIONS :\n"
+        "- Utilise 'explicite' si l'élément est directement "
+        "présent dans une ou plusieurs séances.\n"
+        "- Utilise 'synthese_prudente' lorsqu'il s'agit d'un "
+        "rapprochement raisonnable de plusieurs informations "
+        "explicites.\n"
+        "- Toute entrée dans evolution compare plusieurs séances et doit "
+        "donc avoir le statut 'synthese_prudente', même lorsque les faits "
+        "comparés sont chacun explicites.\n"
+        "- Une synthèse prudente doit rester formulée avec "
+        "mesure et ne doit jamais devenir un diagnostic.\n\n"
+
+        "PROBLÉMATIQUES ACTUELLES :\n"
+        "- Résume uniquement les difficultés dont le caractère actuel "
+        "est soutenu par les données récentes.\n"
+        "- Une problématique peut être considérée comme actuelle si elle "
+        "est présente dans la séance la plus récente ou si sa persistance "
+        "jusqu'aux séances récentes est soutenue par plusieurs données.\n"
+        "- Une difficulté mentionnée uniquement dans une ancienne séance "
+        "ne doit pas être présentée comme actuelle simplement parce "
+        "qu'aucune résolution ultérieure n'est mentionnée.\n"
+        "- L'absence de mention ultérieure ne prouve ni la résolution "
+        "ni la persistance d'une difficulté.\n"
+        "- N'utilise pas d'étiquette diagnostique non présente.\n\n"
+
+        "ÉVOLUTION :\n"
+        "- Ce champ décrit une évolution ENTRE plusieurs séances.\n"
+        "- Une entrée dans evolution doit être soutenue par "
+        "au moins deux dates de séance différentes.\n"
+        "- Son statut doit toujours être 'synthese_prudente'.\n"
+        "- Une amélioration, aggravation, stabilité ou fluctuation "
+        "longitudinale ne doit pas être déduite d'une seule séance.\n"
+        "- Une variation observée à l'intérieur d'une seule séance ou "
+        "d'une seule situation, par exemple une anxiété passant de 7/10 "
+        "à 4/10 pendant un trajet, n'est pas à elle seule une évolution "
+        "longitudinale.\n"
+        "- Dans ce cas, conserve l'information dans la catégorie clinique "
+        "appropriée, par exemple emotions_actuelles, mais ne crée pas "
+        "d'entrée correspondante dans evolution.\n"
+        "- Compare uniquement ce qui peut réellement être comparé entre "
+        "plusieurs séances.\n"
+        "- Utilise 'amelioration' seulement lorsqu'un changement favorable "
+        "entre plusieurs séances est soutenu par les données.\n"
+        "- Utilise 'aggravation' seulement lorsqu'un changement défavorable "
+        "entre plusieurs séances est soutenu par les données.\n"
+        "- Utilise 'stable' ou 'fluctuation' uniquement si plusieurs séances "
+        "permettent réellement cette conclusion.\n"
+        "- Utilise 'indeterminee' si les données longitudinales ne permettent "
+        "pas de conclure.\n"
+        "- Ne confonds jamais changement temporel et effet causal d'une "
+        "intervention.\n\n"
+
+        "ÉMOTIONS ACTUELLES :\n"
+        "- Conserve les émotions encore pertinentes dans les "
+        "séances récentes.\n"
+        "- Ne déduis jamais une émotion absente des sources.\n\n"
+
+        "COGNITIONS RÉCURRENTES :\n"
+        "- Réserve ce champ aux cognitions ou thèmes cognitifs "
+        "qui apparaissent à plusieurs reprises, ou dont la "
+        "continuité est directement soutenue par les données.\n"
+        "- Ne transforme pas deux pensées différentes en une "
+        "croyance générale sans justification.\n"
+        "- Si referent_contextuel est renseigné, utilise-le lors d'une "
+        "reformulation afin d'éviter qu'un pronom change de référent ou "
+        "devienne grammaticalement ambigu.\n\n"
+
+        "COMPORTEMENTS ET ÉVITEMENTS :\n"
+        "- Résume les comportements cliniquement pertinents "
+        "et les évitements actuels.\n"
+        "- evitements_actuels doit contenir uniquement des comportements "
+        "d'évitement réellement rapportés comme actuels ou dont la "
+        "persistance récente est explicitement soutenue.\n"
+        "- Une pensée, une crainte ou une envie de fuir ne constitue pas "
+        "un évitement comportemental si la personne reste dans la situation.\n"
+        "- Un évitement ancien ne doit pas rester dans evitements_actuels "
+        "si les données les plus récentes indiquent explicitement que ce "
+        "comportement ne s'est pas reproduit. Il peut être mentionné dans "
+        "evolution si cela est pertinent.\n"
+        "- Si un évitement initial est suivi d'une confrontation "
+        "à la situation, décris prudemment cette évolution sans "
+        "affirmer que le problème est résolu.\n\n"
+
+        "INTERVENTIONS DOCUMENTÉES :\n"
+        "- Recense les interventions, exercices ou consignes explicitement "
+        "documentés dans les sources.\n"
+        "- Respecte leur statut : proposé, discuté ou réalisé lorsqu'il est "
+        "possible de le déterminer.\n"
+        "- Ne transforme pas une intervention proposée en intervention réalisée.\n"
+        "- Regroupe les formulations manifestement équivalentes sans perdre "
+        "l'information temporelle.\n\n"
+
+        "RÉPONSE AUX INTERVENTIONS :\n"
+        "- Ne renseigne ce champ que lorsqu'une séance ultérieure "
+        "contient des éléments permettant d'observer ce qui s'est "
+        "passé après une intervention ou une tâche.\n"
+        "- Une succession temporelle n'établit jamais à elle seule "
+        "une causalité ni même la réalisation exacte de l'exercice proposé.\n"
+        "- Lorsque tu relies une intervention d'une séance à des éléments "
+        "rapportés lors d'une séance ultérieure, utilise normalement le "
+        "statut 'synthese_prudente'.\n"
+        "- Utilise 'explicite' uniquement si les données sources indiquent "
+        "elles-mêmes explicitement que l'élément observé constitue une "
+        "réponse à cette intervention précise.\n"
+        "- Écris 'après la proposition de l'exercice...' lorsque les données "
+        "indiquent seulement que l'exercice a été proposé.\n"
+        "- N'écris pas 'après l'exercice...' si sa réalisation exacte "
+        "n'est pas explicitement attestée.\n"
+        "- Ne suppose jamais que des trajets effectués ultérieurement avaient "
+        "la durée prescrite si cette durée n'est pas explicitement rapportée.\n"
+        "- Ne formule jamais 'grâce à', 'a entraîné', 'a permis' ou toute "
+        "autre causalité non explicitement soutenue.\n\n"
+
+        "TÂCHES ACTUELLES :\n"
+        "- Conserve les tâches interséances les plus récentes "
+        "qui doivent encore être réalisées ou suivies.\n"
+        "- Une ancienne tâche remplacée par une nouvelle ne doit "
+        "pas être présentée comme tâche actuelle.\n\n"
+
+        "ÉLÉMENTS INCERTAINS :\n"
+        "- Conserve uniquement les incertitudes pertinentes présentes dans "
+        "les champs elements_incertains des séances sources.\n"
+        "- Ne transforme jamais une donnée incertaine en donnée "
+        "certaine.\n"
+        "- referent_explicitement_identifie=false ne constitue pas à lui "
+        "seul un élément incertain lorsque referent_contextuel est renseigné.\n"
+        "- N'invente pas une incertitude à partir d'un simple pronom dont "
+        "le référent contextuel est fourni.\n\n"
+
+        "POINTS À REPRENDRE :\n"
+        "- Ce champ peut identifier ce qu'il serait pertinent "
+        "de vérifier lors d'une prochaine séance.\n"
+        "- Il doit découler directement des données : tâche à "
+        "suivre, évolution à vérifier, information manquante "
+        "importante ou élément incertain.\n"
+        "- N'invente pas un nouvel objectif thérapeutique.\n\n"
+
+        "TRAÇABILITÉ :\n"
+        "- Chaque élément doit comporter uniquement les dates "
+        "qui soutiennent réellement son contenu.\n"
+        "- Lorsqu'une citation contient un pronom, préserve la citation ou "
+        "remplace clairement le pronom par son referent_contextuel ; ne "
+        "produis pas une reformulation grammaticalement ambiguë.\n"
+        "- Évite les doublons et les paraphrases inutiles."
+    )
+
+    prompt_utilisateur = (
+        "Voici les séances structurées, dans l'ordre "
+        "chronologique :\n\n"
+        "----- DÉBUT DES DONNÉES -----\n"
+        f"{donnees_source}\n"
+        "----- FIN DES DONNÉES -----"
+    )
+
+    reponse = client.responses.parse(
+        model=MODEL_EXTRACTION,
+
+        reasoning={
+            "effort": REASONING_EFFORT_SYNTHESE,
+        },
+
+        store=False,
+
+        max_output_tokens=MAX_OUTPUT_TOKENS_SYNTHESE,
+
+        input=[
+            {
+                "role": "system",
+                "content": prompt_systeme,
+            },
+            {
+                "role": "user",
+                "content": prompt_utilisateur,
+            },
+        ],
+
+        text_format=SyntheseLongitudinale,
+    )
+
+    if getattr(
+        reponse,
+        "status",
+        None,
+    ) == "incomplete":
+
+        details = getattr(
+            reponse,
+            "incomplete_details",
+            None,
+        )
+
+        raise RuntimeError(
+            "La réponse de synthèse est incomplète. "
+            f"Détails : {details}"
+        )
+
+    synthese = reponse.output_parsed
+
+    if synthese is None:
+        raise RuntimeError(
+            "Terra n'a pas retourné de synthèse structurée valide."
+        )
+
+    return synthese, reponse
+
+
+def obtenir_dates_autorisees(
+    seances: list[
+        tuple[Path, DonneesCliniques]
+    ],
+) -> set[date]:
+
+    return {
+        donnees.date_seance
+        for _, donnees in seances
+        if donnees.date_seance is not None
+    }
+
+
+def verifier_dates_sources(
+    synthese: SyntheseLongitudinale,
+    dates_autorisees: set[date],
+) -> None:
+    """
+    Empêche le modèle d'inventer une date de séance.
+    """
+
+    dates_utilisees: list[date] = []
+
+    collections_elements = [
+        synthese.problematiques_actuelles,
+        synthese.emotions_actuelles,
+        synthese.cognitions_recurrentes,
+        synthese.comportements_significatifs,
+        synthese.evitements_actuels,
+        synthese.reponse_aux_interventions,
+        synthese.taches_actuelles,
+        synthese.elements_incertains,
+    ]
+
+    for collection in collections_elements:
+        for element in collection:
+            dates_utilisees.extend(
+                element.dates_sources
+            )
+
+    for element in synthese.evolution:
+        dates_utilisees.extend(
+            element.dates_sources
+        )
+
+    for element in (
+        synthese.interventions_documentees
+    ):
+        dates_utilisees.extend(
+            element.dates_sources
+        )
+
+    for element in synthese.points_a_reprendre:
+        dates_utilisees.extend(
+            element.dates_sources
+        )
+
+    dates_invalides = {
+        date_source
+        for date_source in dates_utilisees
+        if date_source not in dates_autorisees
+    }
+
+    if dates_invalides:
+        invalides = ", ".join(
+            sorted(
+                d.isoformat()
+                for d in dates_invalides
+            )
+        )
+
+        raise ValueError(
+            "La synthèse contient des dates sources inexistantes : "
+            f"{invalides}"
+        )
+
+
+def verifier_evolutions_longitudinales(
+    synthese: SyntheseLongitudinale,
+) -> None:
+    """
+    Garantit qu'une évolution compare au moins deux séances distinctes.
+    """
+
+    positions_invalides = [
+        position
+        for position, element in enumerate(
+            synthese.evolution,
+            start=1,
+        )
+        if len(set(element.dates_sources)) < 2
+    ]
+
+    if positions_invalides:
+        positions = ", ".join(
+            str(position)
+            for position in positions_invalides
+        )
+
+        raise ValueError(
+            "Les entrées evolution suivantes ne comparent pas au moins "
+            f"deux séances distinctes : {positions}"
+        )
+
+
+def construire_fichier_synthese(
+    patient: dict,
+    synthese: SyntheseLongitudinale,
+    seances: list[
+        tuple[Path, DonneesCliniques]
+    ],
+    empreinte_sources: str,
+) -> FichierSyntheseLongitudinale:
+
+    dates = [
+        donnees.date_seance
+        for _, donnees in seances
+        if donnees.date_seance is not None
+    ]
+
+    fichiers_sources = [
+        fichier.name
+        for fichier, _ in seances
+    ]
+
+    metadata = MetadataSynthese(
+        schema_version=SYNTHESIS_SCHEMA_VERSION,
+        patient_id=patient["identifiant"],
+        modele=MODEL_EXTRACTION,
+        genere_le=(
+            datetime.now(
+                timezone.utc
+            ).isoformat()
+        ),
+        nombre_seances_integrees=len(
+            seances
+        ),
+        date_premiere_seance=min(
+            dates
+        ),
+        date_derniere_seance=max(
+            dates
+        ),
+        fichiers_sources=fichiers_sources,
+        empreinte_sources_sha256=empreinte_sources,
+    )
+
+    return FichierSyntheseLongitudinale(
+        metadata=metadata,
+        synthese=synthese,
+    )
+
+
+def enregistrer_synthese_longitudinale(
+    fichier_final: FichierSyntheseLongitudinale,
+    output_path: Path,
+) -> None:
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    contenu = fichier_final.model_dump(
+        mode="json"
+    )
+
+    output_path.write_text(
+        json.dumps(
+            contenu,
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def mettre_a_jour_synthese_longitudinale(
+    patient: dict,
+    cache_client: dict[str, OpenAI],
+    statistiques: dict,
+) -> bool:
+    """
+    Met à jour la synthèse uniquement si les JSON cliniques
+    V2 datés du patient ont changé.
+
+    Retourne True lorsqu'un appel API de synthèse a été effectué.
+    """
+
+    print(
+        "\n--- SYNTHÈSE LONGITUDINALE ---"
+    )
+
+    fichiers = obtenir_fichiers_cliniques_patient(
+        patient
+    )
+
+    seances, fichiers_ignores = (
+        charger_seances_longitudinales(
+            fichiers
+        )
+    )
+
+    if fichiers_ignores:
+        print(
+            "Fichiers cliniques ignorés pour la synthèse :"
+        )
+
+        for element in fichiers_ignores:
+            print(
+                f"- {element}"
+            )
+
+    print(
+        f"Séances V2 valides trouvées : {len(seances)}"
+    )
+
+    if len(seances) < MIN_SEANCES_SYNTHESE:
+        statistiques[
+            "syntheses_ignorees"
+        ] += 1
+
+        print(
+            "Synthèse non générée : au moins "
+            f"{MIN_SEANCES_SYNTHESE} séances valides "
+            "sont nécessaires."
+        )
+
+        return False
+
+    fichiers_sources = [
+        fichier
+        for fichier, _ in seances
+    ]
+
+    empreinte_sources = (
+        calculer_empreinte_sources(
+            fichiers_sources
+        )
+    )
+
+    output_path = (
+        obtenir_chemin_synthese_longitudinale(
+            patient
+        )
+    )
+
+    print(
+        "Empreinte sources : "
+        f"{empreinte_sources[:16]}..."
+    )
+
+    if synthese_deja_a_jour(
+        output_path,
+        empreinte_sources,
+    ):
+        statistiques[
+            "syntheses_deja_a_jour"
+        ] += 1
+
+        print(
+            "Synthèse longitudinale déjà à jour."
+        )
+        print(
+            "Aucun nouvel appel API de synthèse."
+        )
+        print(
+            f"Fichier existant : {output_path}"
+        )
+
+        return False
+
+    client = obtenir_client(
+        cache_client
+    )
+
+    print(
+        "Génération de la synthèse longitudinale "
+        f"avec {MODEL_EXTRACTION}..."
+    )
+
+    synthese, reponse = (
+        generer_synthese_longitudinale(
+            client,
+            seances,
+        )
+    )
+
+    dates_autorisees = (
+        obtenir_dates_autorisees(
+            seances
+        )
+    )
+
+    verifier_dates_sources(
+        synthese,
+        dates_autorisees,
+    )
+
+    verifier_evolutions_longitudinales(
+        synthese
+    )
+
+    fichier_final = (
+        construire_fichier_synthese(
+            patient,
+            synthese,
+            seances,
+            empreinte_sources,
+        )
+    )
+
+    enregistrer_synthese_longitudinale(
+        fichier_final,
+        output_path,
+    )
+
+    statistiques[
+        "syntheses_creees"
+    ] += 1
+
+    (
+        input_tokens,
+        output_tokens,
+        total_tokens,
+    ) = ajouter_utilisation(
+        statistiques,
+        "synthese",
+        reponse,
+    )
+
+    print(
+        "Synthèse longitudinale créée : "
+        f"{output_path}"
+    )
+
+    print(
+        "\n--- UTILISATION SYNTHÈSE ---"
+    )
+    print(
+        f"Tokens d'entrée : {input_tokens}"
+    )
+    print(
+        f"Tokens de sortie : {output_tokens}"
+    )
+    print(
+        f"Tokens totaux : {total_tokens}"
+    )
+
+    return True
 
 
 # =========================================================
@@ -1370,6 +2558,30 @@ def traiter_image(
         f"({patient.get('nom_affichage', '')})"
     )
 
+    try:
+        date_attendue = extraire_date_nom_fichier(
+            fichier_source.name
+        )
+
+    except DateNomFichierInvalide:
+        statistiques[
+            "dates_nom_invalides"
+        ] += 1
+
+        print(
+            "Résultat : date du nom de fichier invalide."
+        )
+        print(
+            "Aucun appel API ne sera effectué pour cette image."
+        )
+
+        raise
+
+    print(
+        "Date déterministe du fichier : "
+        f"{date_attendue.isoformat()}"
+    )
+
     (
         image_patient,
         copie_creee,
@@ -1493,9 +2705,91 @@ def traiter_image(
         transcription_path
     )
 
+    try:
+        date_transcription = (
+            verifier_date_transcription(
+                transcription,
+                date_attendue,
+            )
+        )
+
+    except DateTranscriptionInvalide:
+        statistiques[
+            "dates_transcription_invalides"
+        ] += 1
+
+        print(
+            "\nRésultat : date OCR invalide ou ambiguë."
+        )
+        print(
+            "Le JSON clinique et la synthèse ne seront pas mis à jour."
+        )
+
+        raise
+
+    except DivergenceDateTranscription:
+        statistiques[
+            "dates_transcription_divergentes"
+        ] += 1
+
+        print(
+            "\nRésultat : divergence entre la date du fichier "
+            "et la transcription."
+        )
+        print(
+            "Le JSON clinique et la synthèse ne seront pas mis à jour."
+        )
+
+        raise
+
+    if date_transcription is None:
+        statistiques[
+            "dates_transcription_absentes"
+        ] += 1
+
+        print(
+            "\nDate absente de l'en-tête OCR : "
+            "la date déterministe du fichier sera utilisée."
+        )
+
+    else:
+        print(
+            "\nDate de transcription confirmée : "
+            f"{date_transcription.isoformat()}"
+        )
+
+    donnees_existantes = (
+        charger_donnees_cliniques_existantes(
+            json_path
+        )
+    )
+
+    if donnees_existantes is not None:
+        try:
+            verifier_date_donnees_cliniques(
+                donnees_existantes,
+                date_attendue,
+            )
+
+        except DivergenceDateDonneesCliniques:
+            statistiques[
+                "dates_json_divergentes"
+            ] += 1
+
+            print(
+                "\nRésultat : divergence entre la date du fichier "
+                "et le JSON clinique existant."
+            )
+            print(
+                "La synthèse ne sera pas mise à jour."
+            )
+
+            raise
+
     if donnees_cliniques_valides(
         json_path,
         transcription_path,
+        date_attendue,
     ):
         print(
             "\nDonnées cliniques V2 valides "
@@ -1533,18 +2827,8 @@ def traiter_image(
         ) = extraire_donnees_cliniques(
             client,
             transcription,
+            date_attendue,
         )
-
-        enregistrer_donnees_cliniques(
-            donnees,
-            json_path,
-        )
-
-        statistiques[
-            "extractions_creees"
-        ] += 1
-
-        appel_effectue = True
 
         (
             input_tokens,
@@ -1555,6 +2839,53 @@ def traiter_image(
             "extraction",
             reponse_extraction,
         )
+
+        appel_effectue = True
+
+        try:
+            donnees = (
+                verifier_date_donnees_cliniques(
+                    donnees,
+                    date_attendue,
+                )
+            )
+
+        except DivergenceDateDonneesCliniques:
+            statistiques[
+                "dates_json_divergentes"
+            ] += 1
+
+            print(
+                "\nRésultat : Terra a retourné une date différente "
+                "de celle du fichier."
+            )
+            print(
+                "Le JSON clinique et la synthèse ne seront pas mis à jour."
+            )
+
+            print(
+                "\n--- UTILISATION EXTRACTION ---"
+            )
+            print(
+                f"Tokens d'entrée : {input_tokens}"
+            )
+            print(
+                f"Tokens de sortie : {output_tokens}"
+            )
+            print(
+                f"Tokens totaux : {total_tokens}"
+            )
+
+            raise
+
+        enregistrer_donnees_cliniques(
+            donnees,
+            json_path,
+        )
+
+        statistiques[
+            "extractions_creees"
+        ] += 1
 
         print(
             "\n--- DONNÉES CLINIQUES V2 ---\n"
@@ -1599,6 +2930,17 @@ def traiter_image(
             f"\nJSON clinique créé : {json_path}"
         )
 
+    synthese_api_effectuee = (
+        mettre_a_jour_synthese_longitudinale(
+            patient,
+            cache_client,
+            statistiques,
+        )
+    )
+
+    if synthese_api_effectuee:
+        appel_effectue = True
+
     if not appel_effectue:
         statistiques["deja_complets"] += 1
 
@@ -1624,9 +2966,17 @@ def creer_statistiques() -> dict:
         "photos_copiees": 0,
         "transcriptions_creees": 0,
         "extractions_creees": 0,
+        "syntheses_creees": 0,
+        "syntheses_deja_a_jour": 0,
+        "syntheses_ignorees": 0,
         "deja_complets": 0,
         "non_identifies": 0,
         "ambigus": 0,
+        "dates_nom_invalides": 0,
+        "dates_transcription_absentes": 0,
+        "dates_transcription_invalides": 0,
+        "dates_transcription_divergentes": 0,
+        "dates_json_divergentes": 0,
         "erreurs": 0,
 
         "ocr_input_tokens": 0,
@@ -1636,6 +2986,10 @@ def creer_statistiques() -> dict:
         "extraction_input_tokens": 0,
         "extraction_output_tokens": 0,
         "extraction_total_tokens": 0,
+
+        "synthese_input_tokens": 0,
+        "synthese_output_tokens": 0,
+        "synthese_total_tokens": 0,
 
         "api_input_tokens": 0,
         "api_output_tokens": 0,
@@ -1667,6 +3021,21 @@ def afficher_resume(
     )
 
     print(
+        f"Synthèses longitudinales créées : "
+        f"{statistiques['syntheses_creees']}"
+    )
+
+    print(
+        f"Synthèses longitudinales déjà à jour : "
+        f"{statistiques['syntheses_deja_a_jour']}"
+    )
+
+    print(
+        f"Synthèses longitudinales ignorées : "
+        f"{statistiques['syntheses_ignorees']}"
+    )
+
+    print(
         f"Fichiers déjà complètement traités : "
         f"{statistiques['deja_complets']}"
     )
@@ -1679,6 +3048,31 @@ def afficher_resume(
     print(
         f"Identifications ambiguës : "
         f"{statistiques['ambigus']}"
+    )
+
+    print(
+        f"Dates invalides dans les noms : "
+        f"{statistiques['dates_nom_invalides']}"
+    )
+
+    print(
+        f"Dates absentes des transcriptions : "
+        f"{statistiques['dates_transcription_absentes']}"
+    )
+
+    print(
+        f"Dates de transcription invalides : "
+        f"{statistiques['dates_transcription_invalides']}"
+    )
+
+    print(
+        f"Divergences fichier/transcription : "
+        f"{statistiques['dates_transcription_divergentes']}"
+    )
+
+    print(
+        f"Divergences fichier/JSON clinique : "
+        f"{statistiques['dates_json_divergentes']}"
     )
 
     print(
@@ -1718,6 +3112,23 @@ def afficher_resume(
     print(
         f"Tokens totaux : "
         f"{statistiques['extraction_total_tokens']}"
+    )
+
+    print("\n--- SYNTHÈSE LONGITUDINALE ---")
+
+    print(
+        f"Tokens d'entrée : "
+        f"{statistiques['synthese_input_tokens']}"
+    )
+
+    print(
+        f"Tokens de sortie : "
+        f"{statistiques['synthese_output_tokens']}"
+    )
+
+    print(
+        f"Tokens totaux : "
+        f"{statistiques['synthese_total_tokens']}"
     )
 
     print("\n--- TOTAL API ---")

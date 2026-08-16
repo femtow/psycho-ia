@@ -51,7 +51,7 @@ MAX_OUTPUT_TOKENS = 5000
 
 INPUT_SCHEMA_VERSION = "2.0"
 
-SYNTHESIS_SCHEMA_VERSION = "1.0"
+SYNTHESIS_SCHEMA_VERSION = "1.1"
 
 
 # =========================================================
@@ -200,9 +200,20 @@ class EvolutionLongitudinale(BaseModel):
         "indeterminee",
     ]
 
-    statut: StatutInformation
+    statut: Literal["synthese_prudente"] = Field(
+        description=(
+            "Une évolution compare plusieurs séances et "
+            "constitue donc toujours une synthèse prudente."
+        )
+    )
 
-    dates_sources: list[date]
+    dates_sources: list[date] = Field(
+        min_length=2,
+        description=(
+            "Au moins deux dates de séances distinctes "
+            "soutenant l'évolution."
+        ),
+    )
 
 
 class InterventionLongitudinale(BaseModel):
@@ -302,7 +313,7 @@ class MetadataSynthese(BaseModel):
         extra="forbid"
     )
 
-    schema_version: Literal["1.0"]
+    schema_version: Literal["1.1"]
 
     patient_id: str
 
@@ -634,6 +645,9 @@ def generer_synthese(
         "- Utilise 'synthese_prudente' lorsqu'il s'agit d'un "
         "rapprochement raisonnable de plusieurs informations "
         "explicites.\n"
+        "- Toute entrée dans evolution compare plusieurs séances et doit "
+        "donc avoir le statut 'synthese_prudente', même lorsque les faits "
+        "comparés sont chacun explicites.\n"
         "- Une synthèse prudente doit rester formulée avec "
         "mesure et ne doit jamais devenir un diagnostic.\n\n"
 
@@ -652,8 +666,9 @@ def generer_synthese(
 
         "ÉVOLUTION :\n"
         "- Ce champ décrit une évolution ENTRE plusieurs séances.\n"
-        "- Une entrée dans evolution doit normalement être soutenue par "
+        "- Une entrée dans evolution doit être soutenue par "
         "au moins deux dates de séance différentes.\n"
+        "- Son statut doit toujours être 'synthese_prudente'.\n"
         "- Une amélioration, aggravation, stabilité ou fluctuation "
         "longitudinale ne doit pas être déduite d'une seule séance.\n"
         "- Une variation observée à l'intérieur d'une seule séance ou "
@@ -686,11 +701,23 @@ def generer_synthese(
         "qui apparaissent à plusieurs reprises, ou dont la "
         "continuité est directement soutenue par les données.\n"
         "- Ne transforme pas deux pensées différentes en une "
-        "croyance générale sans justification.\n\n"
+        "croyance générale sans justification.\n"
+        "- Si referent_contextuel est renseigné, utilise-le lors d'une "
+        "reformulation afin d'éviter qu'un pronom change de référent ou "
+        "devienne grammaticalement ambigu.\n\n"
 
         "COMPORTEMENTS ET ÉVITEMENTS :\n"
         "- Résume les comportements cliniquement pertinents "
         "et les évitements actuels.\n"
+        "- evitements_actuels doit contenir uniquement des comportements "
+        "d'évitement réellement rapportés comme actuels ou dont la "
+        "persistance récente est explicitement soutenue.\n"
+        "- Une pensée, une crainte ou une envie de fuir ne constitue pas "
+        "un évitement comportemental si la personne reste dans la situation.\n"
+        "- Un évitement ancien ne doit pas rester dans evitements_actuels "
+        "si les données les plus récentes indiquent explicitement que ce "
+        "comportement ne s'est pas reproduit. Il peut être mentionné dans "
+        "evolution si cela est pertinent.\n"
         "- Si un évitement initial est suivi d'une confrontation "
         "à la situation, décris prudemment cette évolution sans "
         "affirmer que le problème est résolu.\n\n"
@@ -732,10 +759,14 @@ def generer_synthese(
         "pas être présentée comme tâche actuelle.\n\n"
 
         "ÉLÉMENTS INCERTAINS :\n"
-        "- Conserve les incertitudes pertinentes provenant des "
-        "séances sources.\n"
+        "- Conserve uniquement les incertitudes pertinentes présentes dans "
+        "les champs elements_incertains des séances sources.\n"
         "- Ne transforme jamais une donnée incertaine en donnée "
-        "certaine.\n\n"
+        "certaine.\n"
+        "- referent_explicitement_identifie=false ne constitue pas à lui "
+        "seul un élément incertain lorsque referent_contextuel est renseigné.\n"
+        "- N'invente pas une incertitude à partir d'un simple pronom dont "
+        "le référent contextuel est fourni.\n\n"
 
         "POINTS À REPRENDRE :\n"
         "- Ce champ peut identifier ce qu'il serait pertinent "
@@ -748,6 +779,9 @@ def generer_synthese(
         "TRAÇABILITÉ :\n"
         "- Chaque élément doit comporter uniquement les dates "
         "qui soutiennent réellement son contenu.\n"
+        "- Lorsqu'une citation contient un pronom, préserve la citation ou "
+        "remplace clairement le pronom par son referent_contextuel ; ne "
+        "produis pas une reformulation grammaticalement ambiguë.\n"
         "- Évite les doublons et les paraphrases inutiles."
     )
 
@@ -891,6 +925,35 @@ def verifier_dates_sources(
         raise ValueError(
             "La synthèse contient des dates sources "
             f"inexistantes : {invalides}"
+        )
+
+
+def verifier_evolutions_longitudinales(
+    synthese: SyntheseLongitudinale,
+) -> None:
+    """
+    Garantit qu'une évolution compare au moins deux séances distinctes.
+    """
+
+    positions_invalides = [
+        position
+        for position, element in enumerate(
+            synthese.evolution,
+            start=1,
+        )
+        if len(set(element.dates_sources)) < 2
+    ]
+
+    if positions_invalides:
+        positions = ", ".join(
+            str(position)
+            for position in positions_invalides
+        )
+
+        raise ValueError(
+            "Les entrées evolution suivantes ne comparent "
+            "pas au moins deux séances distinctes : "
+            f"{positions}"
         )
 
 
@@ -1176,6 +1239,10 @@ def main() -> None:
         verifier_dates_sources(
             synthese,
             dates_autorisees,
+        )
+
+        verifier_evolutions_longitudinales(
+            synthese
         )
 
         # -------------------------------------------------
