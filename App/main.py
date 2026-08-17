@@ -70,13 +70,18 @@ OCR_SHARPEN_THRESHOLD = 2
 MAX_OUTPUT_TOKENS_OCR = 2000
 MAX_OUTPUT_TOKENS_EXTRACTION = 2500
 MAX_OUTPUT_TOKENS_SYNTHESE = 5000
+MAX_OUTPUT_TOKENS_PREPARATION = 4000
 
 REASONING_EFFORT_SYNTHESE = "low"
+REASONING_EFFORT_PREPARATION = "low"
 
 SCHEMA_VERSION = "2.0"
 SYNTHESIS_SCHEMA_VERSION = "1.1"
+PREPARATION_SCHEMA_VERSION = "1.0"
+PREPARATION_GENERATOR_VERSION = "1.0"
 
 MIN_SEANCES_SYNTHESE = 2
+MAX_SEANCES_PREPARATION = 3
 
 NOMBRE_LIGNES_ENTETE_DATE = 5
 
@@ -113,8 +118,62 @@ PROMPT_OCR = (
     "- Retourne uniquement la transcription."
 )
 
+PROMPT_PREPARATION_SYSTEME = (
+    "Tu prépares un document d'aide à la préparation de la prochaine "
+    "séance de psychothérapie à partir de données cliniques structurées "
+    "et d'une synthèse longitudinale.\n\n"
+
+    "Ce document est destiné au psychologue. Il ne remplace pas son "
+    "jugement clinique. Ce n'est ni un diagnostic, ni une analyse "
+    "fonctionnelle complète, ni un plan de traitement.\n\n"
+
+    "RÈGLES FONDAMENTALES :\n"
+    "- Utilise exclusivement les sources fournies.\n"
+    "- N'invente aucun fait, symptôme, risque, antécédent, objectif ou "
+    "lien causal.\n"
+    "- N'interprète jamais l'absence de mention comme une résolution, une "
+    "persistance ou une absence clinique.\n"
+    "- Toute date source doit correspondre à une séance fournie et soutenir "
+    "directement le contenu.\n"
+    "- Les listes peuvent et doivent rester vides lorsque les sources ne "
+    "justifient aucun élément.\n"
+    "- Évite les doublons et les reformulations inutiles.\n\n"
+
+    "DONNÉES DOCUMENTÉES :\n"
+    "- Pour toutes les rubriques documentées, utilise uniquement les JSON "
+    "des séances cliniques. La synthèse longitudinale ne constitue pas une "
+    "preuve documentaire pour ces rubriques.\n"
+    "- resume_derniere_seance contient uniquement des informations "
+    "explicitement présentes dans la séance la plus récente.\n"
+    "- points_explicitement_a_reprendre contient uniquement un point dont "
+    "la source indique explicitement qu'il faut le reprendre, le revoir ou "
+    "le poursuivre. Ne transforme pas une ancienne difficulté ou une tâche "
+    "en point explicitement à reprendre.\n"
+    "- elements_de_securite_explicitement_documentes ne contient que des "
+    "éléments de sécurité ou de risque explicitement documentés. Ne déduis "
+    "aucun niveau de risque et ne crée aucune alerte par prudence générale.\n\n"
+
+    "SYNTHÈSES PRUDENTES :\n"
+    "- evolutions_prudentes compare uniquement des informations réellement "
+    "comparables provenant d'au moins deux dates distinctes.\n"
+    "- Formule toute évolution avec mesure, sans conclure à une causalité.\n"
+    "- Une variation au sein d'une seule séance n'est pas une évolution "
+    "longitudinale.\n\n"
+
+    "SUGGESTIONS POUR LA PROCHAINE SÉANCE :\n"
+    "- suggestions_prochaine_seance et questions_possibles sont des "
+    "propositions de l'IA, jamais des données cliniques établies.\n"
+    "- Chaque proposition doit avoir une justification documentaire précise "
+    "et des dates qui la soutiennent.\n"
+    "- Une tâche ancienne non mentionnée ensuite peut seulement justifier "
+    "une question éventuelle, jamais l'affirmation qu'elle reste active.\n"
+    "- Ne propose ni diagnostic, ni traitement, ni conduite à tenir en cas "
+    "d'urgence.\n"
+    "- Ne remplis pas ces listes artificiellement."
+)
+
 MOTIF_DATE_NOM_FICHIER = re.compile(
-    r"^(?P<date>\d{4}-\d{2}-\d{2})_"
+    r"^(?P<date>\d{4}-\d{2}-\d{2})[_-]"
 )
 
 MOTIFS_DATE_TRANSCRIPTION = (
@@ -477,6 +536,170 @@ class FichierSyntheseLongitudinale(BaseModel):
 
 
 # =========================================================
+# SCHÉMA DE PRÉPARATION DE LA PROCHAINE SÉANCE V1
+# =========================================================
+
+class ElementPreparationDocumente(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contenu: str
+
+    date_source: date
+
+
+class EvolutionPreparationPrudente(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contenu: str
+
+    dates_sources: list[date] = Field(
+        min_length=2
+    )
+
+
+class SuggestionPreparation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contenu: str
+
+    justification_documentee: str
+
+    dates_sources: list[date] = Field(
+        min_length=1
+    )
+
+
+class QuestionPreparation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str
+
+    raison_documentee: str
+
+    dates_sources: list[date] = Field(
+        min_length=1
+    )
+
+
+class PreparationGeneree(BaseModel):
+    """Partie produite par Terra avant ajouts déterministes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    resume_derniere_seance: list[
+        ElementPreparationDocumente
+    ]
+
+    points_explicitement_a_reprendre: list[
+        ElementPreparationDocumente
+    ]
+
+    elements_de_securite_explicitement_documentes: list[
+        ElementPreparationDocumente
+    ]
+
+    evolutions_prudentes: list[
+        EvolutionPreparationPrudente
+    ]
+
+    suggestions_prochaine_seance: list[
+        SuggestionPreparation
+    ]
+
+    questions_possibles: list[
+        QuestionPreparation
+    ]
+
+
+class DonneesDocumenteesPreparation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resume_derniere_seance: list[
+        ElementPreparationDocumente
+    ]
+
+    taches_interseances_documentees: list[
+        ElementPreparationDocumente
+    ]
+
+    points_explicitement_a_reprendre: list[
+        ElementPreparationDocumente
+    ]
+
+    elements_incertains: list[
+        ElementPreparationDocumente
+    ]
+
+    elements_de_securite_explicitement_documentes: list[
+        ElementPreparationDocumente
+    ]
+
+
+class SynthesesPrudentesPreparation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evolutions_prudentes: list[
+        EvolutionPreparationPrudente
+    ]
+
+
+class SuggestionsIAPreparation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    suggestions_prochaine_seance: list[
+        SuggestionPreparation
+    ]
+
+    questions_possibles: list[
+        QuestionPreparation
+    ]
+
+
+class PreparationProchaineSeance(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    donnees_documentees: DonneesDocumenteesPreparation
+
+    syntheses_prudentes: SynthesesPrudentesPreparation
+
+    suggestions_ia: SuggestionsIAPreparation
+
+
+class MetadataPreparation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1.0"]
+
+    generator_version: str
+
+    modele: str
+
+    prompt_sha256: str
+
+    patient_id: str
+
+    genere_le: str
+
+    date_derniere_seance: date
+
+    fichiers_sources_cliniques: list[str]
+
+    fichier_synthese_source: str
+
+    empreinte_sources_sha256: str
+
+    empreinte_generation_sha256: str
+
+
+class FichierPreparationProchaineSeance(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    metadata: MetadataPreparation
+
+    preparation: PreparationProchaineSeance
+
+
+# =========================================================
 # CLIENT OPENAI
 # =========================================================
 
@@ -554,7 +777,7 @@ def extraire_date_nom_fichier(
     nom_fichier: str,
 ) -> date:
     """
-    Exige un préfixe AAAA-MM-JJ_ dans le nom du fichier.
+    Exige un préfixe AAAA-MM-JJ_ ou AAAA-MM-JJ-.
     """
 
     nom_sans_extension = Path(
@@ -571,7 +794,7 @@ def extraire_date_nom_fichier(
         raise DateNomFichierInvalide(
             "Le nom du fichier doit commencer par une date "
             "valide au format AAAA-MM-JJ suivie d'un "
-            "soulignement."
+            "soulignement ou d'un tiret."
         )
 
     date_texte = correspondance.group(
@@ -2468,6 +2691,714 @@ def mettre_a_jour_synthese_longitudinale(
 
 
 # =========================================================
+# PRÉPARATION DE LA PROCHAINE SÉANCE
+# =========================================================
+
+def obtenir_chemin_preparation_prochaine_seance(
+    patient: dict,
+) -> Path:
+
+    return (
+        patient["dossier"]
+        / "documents_generes"
+        / "preparation_prochaine_seance.json"
+    )
+
+
+def calculer_sha256_json(
+    contenu,
+) -> str:
+
+    canonique = json.dumps(
+        contenu,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+    return hashlib.sha256(
+        canonique.encode("utf-8")
+    ).hexdigest()
+
+
+def charger_synthese_courante_pour_preparation(
+    patient: dict,
+    seances: list[
+        tuple[Path, DonneesCliniques]
+    ],
+) -> tuple[Path, FichierSyntheseLongitudinale] | None:
+    """
+    N'utilise jamais une synthèse absente, invalide ou obsolète.
+    """
+
+    chemin = obtenir_chemin_synthese_longitudinale(
+        patient
+    )
+
+    if not chemin.is_file():
+        return None
+
+    try:
+        fichier_synthese = (
+            FichierSyntheseLongitudinale
+            .model_validate_json(
+                chemin.read_text(
+                    encoding="utf-8-sig"
+                )
+            )
+        )
+    except Exception:
+        return None
+
+    fichiers_cliniques = [
+        fichier
+        for fichier, _ in seances
+    ]
+
+    empreinte_attendue = (
+        calculer_empreinte_sources(
+            fichiers_cliniques
+        )
+    )
+
+    metadata = fichier_synthese.metadata
+
+    if (
+        metadata.patient_id
+        != patient["identifiant"]
+        or metadata.empreinte_sources_sha256
+        != empreinte_attendue
+        or metadata.date_derniere_seance
+        != seances[-1][1].date_seance
+    ):
+        return None
+
+    return chemin, fichier_synthese
+
+
+def selectionner_seances_preparation(
+    seances: list[
+        tuple[Path, DonneesCliniques]
+    ],
+) -> list[tuple[Path, DonneesCliniques]]:
+
+    return seances[
+        -MAX_SEANCES_PREPARATION:
+    ]
+
+
+def calculer_empreintes_preparation(
+    seances: list[
+        tuple[Path, DonneesCliniques]
+    ],
+    fichier_synthese: FichierSyntheseLongitudinale,
+) -> tuple[str, str, str]:
+
+    sources = {
+        "seances": [
+            {
+                "fichier": fichier.name,
+                "contenu": donnees.model_dump(
+                    mode="json"
+                ),
+            }
+            for fichier, donnees in seances
+        ],
+        "synthese_longitudinale": (
+            fichier_synthese.model_dump(
+                mode="json"
+            )
+        ),
+    }
+
+    empreinte_sources = calculer_sha256_json(
+        sources
+    )
+
+    prompt_sha256 = hashlib.sha256(
+        PROMPT_PREPARATION_SYSTEME.encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+    empreinte_generation = calculer_sha256_json(
+        {
+            "empreinte_sources_sha256": (
+                empreinte_sources
+            ),
+            "schema_version": (
+                PREPARATION_SCHEMA_VERSION
+            ),
+            "generator_version": (
+                PREPARATION_GENERATOR_VERSION
+            ),
+            "modele": MODEL_EXTRACTION,
+            "prompt_sha256": prompt_sha256,
+        }
+    )
+
+    return (
+        empreinte_sources,
+        empreinte_generation,
+        prompt_sha256,
+    )
+
+
+def preparation_deja_a_jour(
+    output_path: Path,
+    empreinte_generation: str,
+) -> bool:
+
+    if not output_path.is_file():
+        return False
+
+    try:
+        preparation = (
+            FichierPreparationProchaineSeance
+            .model_validate_json(
+                output_path.read_text(
+                    encoding="utf-8-sig"
+                )
+            )
+        )
+    except Exception:
+        return False
+
+    return (
+        preparation.metadata
+        .empreinte_generation_sha256
+        == empreinte_generation
+    )
+
+
+def preparer_sources_preparation_pour_api(
+    seances: list[
+        tuple[Path, DonneesCliniques]
+    ],
+    fichier_synthese: FichierSyntheseLongitudinale,
+) -> str:
+
+    contenu = {
+        "seances_cliniques": [
+            {
+                "date_seance": (
+                    donnees.date_seance.isoformat()
+                    if donnees.date_seance
+                    else None
+                ),
+                "donnees": donnees.model_dump(
+                    mode="json"
+                ),
+            }
+            for _, donnees in seances
+        ],
+        "synthese_longitudinale": (
+            fichier_synthese.synthese.model_dump(
+                mode="json"
+            )
+        ),
+    }
+
+    return json.dumps(
+        contenu,
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def generer_preparation_prochaine_seance(
+    client: OpenAI,
+    seances: list[
+        tuple[Path, DonneesCliniques]
+    ],
+    fichier_synthese: FichierSyntheseLongitudinale,
+):
+
+    donnees_source = (
+        preparer_sources_preparation_pour_api(
+            seances,
+            fichier_synthese,
+        )
+    )
+
+    prompt_utilisateur = (
+        "Voici les sources autorisées. La dernière séance de la liste est "
+        "la séance la plus récente.\n\n"
+        "----- DÉBUT DES SOURCES -----\n"
+        f"{donnees_source}\n"
+        "----- FIN DES SOURCES -----"
+    )
+
+    reponse = client.responses.parse(
+        model=MODEL_EXTRACTION,
+        reasoning={
+            "effort": REASONING_EFFORT_PREPARATION,
+        },
+        store=False,
+        max_output_tokens=(
+            MAX_OUTPUT_TOKENS_PREPARATION
+        ),
+        input=[
+            {
+                "role": "system",
+                "content": (
+                    PROMPT_PREPARATION_SYSTEME
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt_utilisateur,
+            },
+        ],
+        text_format=PreparationGeneree,
+    )
+
+    if getattr(
+        reponse,
+        "status",
+        None,
+    ) == "incomplete":
+        details = getattr(
+            reponse,
+            "incomplete_details",
+            None,
+        )
+
+        raise RuntimeError(
+            "La réponse de préparation est incomplète. "
+            f"Détails : {details}"
+        )
+
+    preparation = reponse.output_parsed
+
+    if preparation is None:
+        raise RuntimeError(
+            "Terra n'a pas retourné de préparation structurée valide."
+        )
+
+    return preparation, reponse
+
+
+def construire_preparation_prochaine_seance(
+    preparation_generee: PreparationGeneree,
+    derniere_seance: DonneesCliniques,
+) -> PreparationProchaineSeance:
+    """
+    Copie les tâches et incertitudes sans les faire reformuler par l'IA.
+    """
+
+    date_derniere = derniere_seance.date_seance
+
+    if date_derniere is None:
+        raise ValueError(
+            "La dernière séance n'est pas datée."
+        )
+
+    taches = [
+        ElementPreparationDocumente(
+            contenu=contenu,
+            date_source=date_derniere,
+        )
+        for contenu in (
+            derniere_seance.taches_interseances
+        )
+    ]
+
+    incertitudes = [
+        ElementPreparationDocumente(
+            contenu=contenu,
+            date_source=date_derniere,
+        )
+        for contenu in (
+            derniere_seance.elements_incertains
+        )
+    ]
+
+    return PreparationProchaineSeance(
+        donnees_documentees=(
+            DonneesDocumenteesPreparation(
+                resume_derniere_seance=(
+                    preparation_generee
+                    .resume_derniere_seance
+                ),
+                taches_interseances_documentees=(
+                    taches
+                ),
+                points_explicitement_a_reprendre=(
+                    preparation_generee
+                    .points_explicitement_a_reprendre
+                ),
+                elements_incertains=incertitudes,
+                elements_de_securite_explicitement_documentes=(
+                    preparation_generee
+                    .elements_de_securite_explicitement_documentes
+                ),
+            )
+        ),
+        syntheses_prudentes=(
+            SynthesesPrudentesPreparation(
+                evolutions_prudentes=(
+                    preparation_generee
+                    .evolutions_prudentes
+                )
+            )
+        ),
+        suggestions_ia=(
+            SuggestionsIAPreparation(
+                suggestions_prochaine_seance=(
+                    preparation_generee
+                    .suggestions_prochaine_seance
+                ),
+                questions_possibles=(
+                    preparation_generee
+                    .questions_possibles
+                ),
+            )
+        ),
+    )
+
+
+def verifier_dates_preparation(
+    preparation: PreparationProchaineSeance,
+    dates_autorisees: set[date],
+    date_derniere_seance: date,
+) -> None:
+    """Refuse toute date inventée et toute fausse évolution."""
+
+    documentees = preparation.donnees_documentees
+
+    elements_dates_simples = [
+        *documentees.resume_derniere_seance,
+        *documentees.taches_interseances_documentees,
+        *documentees.points_explicitement_a_reprendre,
+        *documentees.elements_incertains,
+        *documentees.elements_de_securite_explicitement_documentes,
+    ]
+
+    dates_utilisees = {
+        element.date_source
+        for element in elements_dates_simples
+    }
+
+    for evolution in (
+        preparation.syntheses_prudentes
+        .evolutions_prudentes
+    ):
+        if len(set(evolution.dates_sources)) < 2:
+            raise ValueError(
+                "Une évolution prudente ne compare pas au moins "
+                "deux séances distinctes."
+            )
+        dates_utilisees.update(
+            evolution.dates_sources
+        )
+
+    for suggestion in (
+        preparation.suggestions_ia
+        .suggestions_prochaine_seance
+    ):
+        dates_utilisees.update(
+            suggestion.dates_sources
+        )
+
+    for question in (
+        preparation.suggestions_ia
+        .questions_possibles
+    ):
+        dates_utilisees.update(
+            question.dates_sources
+        )
+
+    dates_invalides = (
+        dates_utilisees
+        - dates_autorisees
+    )
+
+    if dates_invalides:
+        invalides = ", ".join(
+            sorted(
+                element.isoformat()
+                for element in dates_invalides
+            )
+        )
+        raise ValueError(
+            "La préparation contient des dates sources inexistantes : "
+            f"{invalides}"
+        )
+
+    dates_resume_invalides = {
+        element.date_source
+        for element in (
+            documentees.resume_derniere_seance
+        )
+        if element.date_source
+        != date_derniere_seance
+    }
+
+    if dates_resume_invalides:
+        raise ValueError(
+            "Le résumé de la dernière séance cite une séance antérieure."
+        )
+
+
+def construire_fichier_preparation(
+    patient: dict,
+    preparation: PreparationProchaineSeance,
+    seances: list[
+        tuple[Path, DonneesCliniques]
+    ],
+    chemin_synthese: Path,
+    empreinte_sources: str,
+    empreinte_generation: str,
+    prompt_sha256: str,
+) -> FichierPreparationProchaineSeance:
+
+    metadata = MetadataPreparation(
+        schema_version=(
+            PREPARATION_SCHEMA_VERSION
+        ),
+        generator_version=(
+            PREPARATION_GENERATOR_VERSION
+        ),
+        modele=MODEL_EXTRACTION,
+        prompt_sha256=prompt_sha256,
+        patient_id=patient["identifiant"],
+        genere_le=(
+            datetime.now(
+                timezone.utc
+            ).isoformat()
+        ),
+        date_derniere_seance=(
+            seances[-1][1].date_seance
+        ),
+        fichiers_sources_cliniques=[
+            fichier.name
+            for fichier, _ in seances
+        ],
+        fichier_synthese_source=(
+            chemin_synthese.name
+        ),
+        empreinte_sources_sha256=(
+            empreinte_sources
+        ),
+        empreinte_generation_sha256=(
+            empreinte_generation
+        ),
+    )
+
+    return FichierPreparationProchaineSeance(
+        metadata=metadata,
+        preparation=preparation,
+    )
+
+
+def enregistrer_preparation_prochaine_seance(
+    fichier_final: FichierPreparationProchaineSeance,
+    output_path: Path,
+) -> None:
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    output_path.write_text(
+        json.dumps(
+            fichier_final.model_dump(
+                mode="json"
+            ),
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def mettre_a_jour_preparation_prochaine_seance(
+    patient: dict,
+    cache_client: dict[str, OpenAI],
+    statistiques: dict,
+) -> bool:
+    """
+    Régénère la préparation si les sources ou le générateur ont changé.
+    """
+
+    print(
+        "\n--- PRÉPARATION DE LA PROCHAINE SÉANCE ---"
+    )
+
+    fichiers = obtenir_fichiers_cliniques_patient(
+        patient
+    )
+    seances, _ = charger_seances_longitudinales(
+        fichiers
+    )
+
+    if len(seances) < MIN_SEANCES_SYNTHESE:
+        statistiques[
+            "preparations_ignorees"
+        ] += 1
+        print(
+            "Préparation non générée : données longitudinales "
+            "insuffisantes."
+        )
+        return False
+
+    synthese_chargee = (
+        charger_synthese_courante_pour_preparation(
+            patient,
+            seances,
+        )
+    )
+
+    if synthese_chargee is None:
+        statistiques[
+            "preparations_ignorees"
+        ] += 1
+        print(
+            "Préparation non générée : synthèse longitudinale "
+            "absente, invalide ou obsolète."
+        )
+        return False
+
+    chemin_synthese, fichier_synthese = (
+        synthese_chargee
+    )
+    seances_selectionnees = (
+        selectionner_seances_preparation(
+            seances
+        )
+    )
+
+    (
+        empreinte_sources,
+        empreinte_generation,
+        prompt_sha256,
+    ) = calculer_empreintes_preparation(
+        seances_selectionnees,
+        fichier_synthese,
+    )
+
+    output_path = (
+        obtenir_chemin_preparation_prochaine_seance(
+            patient
+        )
+    )
+
+    print(
+        "Empreinte génération : "
+        f"{empreinte_generation[:16]}..."
+    )
+
+    if preparation_deja_a_jour(
+        output_path,
+        empreinte_generation,
+    ):
+        statistiques[
+            "preparations_deja_a_jour"
+        ] += 1
+        print(
+            "Préparation de la prochaine séance déjà à jour."
+        )
+        print(
+            "Aucun nouvel appel API de préparation."
+        )
+        print(
+            f"Fichier existant : {output_path}"
+        )
+        return False
+
+    client = obtenir_client(
+        cache_client
+    )
+
+    print(
+        "Génération de la préparation avec "
+        f"{MODEL_EXTRACTION}..."
+    )
+
+    preparation_generee, reponse = (
+        generer_preparation_prochaine_seance(
+            client,
+            seances_selectionnees,
+            fichier_synthese,
+        )
+    )
+
+    (
+        input_tokens,
+        output_tokens,
+        total_tokens,
+    ) = ajouter_utilisation(
+        statistiques,
+        "preparation",
+        reponse,
+    )
+
+    preparation = (
+        construire_preparation_prochaine_seance(
+            preparation_generee,
+            seances_selectionnees[-1][1],
+        )
+    )
+
+    # La synthèse fournie à Terra peut citer des séances plus anciennes
+    # que les trois JSON détaillés retenus.
+    dates_autorisees = obtenir_dates_autorisees(
+        seances
+    )
+    date_derniere = (
+        seances_selectionnees[-1][1]
+        .date_seance
+    )
+
+    verifier_dates_preparation(
+        preparation,
+        dates_autorisees,
+        date_derniere,
+    )
+
+    fichier_final = construire_fichier_preparation(
+        patient,
+        preparation,
+        seances_selectionnees,
+        chemin_synthese,
+        empreinte_sources,
+        empreinte_generation,
+        prompt_sha256,
+    )
+
+    enregistrer_preparation_prochaine_seance(
+        fichier_final,
+        output_path,
+    )
+
+    statistiques[
+        "preparations_creees"
+    ] += 1
+
+    print(
+        "Préparation de la prochaine séance créée : "
+        f"{output_path}"
+    )
+    print(
+        "\n--- UTILISATION PRÉPARATION ---"
+    )
+    print(
+        f"Tokens d'entrée : {input_tokens}"
+    )
+    print(
+        f"Tokens de sortie : {output_tokens}"
+    )
+    print(
+        f"Tokens totaux : {total_tokens}"
+    )
+
+    return True
+
+
+# =========================================================
 # TOKENS
 # =========================================================
 
@@ -2996,7 +3927,7 @@ def traiter_image(
 
 
 # =========================================================
-# TRAITEMENT D'UN LOT ET SYNTHÈSES PAR PATIENT
+# TRAITEMENT D'UN LOT ET DOCUMENTS PAR PATIENT
 # =========================================================
 
 def traiter_lot_images(
@@ -3007,7 +3938,7 @@ def traiter_lot_images(
 ) -> None:
     """
     Traite toutes les images avant de mettre à jour une seule fois
-    la synthèse de chaque patient concerné.
+    les documents de chaque patient concerné.
     """
 
     patients_concernes: dict[
@@ -3083,6 +4014,30 @@ def traiter_lot_images(
                 "les autres patients."
             )
 
+        try:
+            mettre_a_jour_preparation_prochaine_seance(
+                patient,
+                cache_client,
+                statistiques,
+            )
+
+        except Exception as erreur:
+            statistiques["erreurs"] += 1
+
+            print(
+                "\nERREUR DE PRÉPARATION POUR CE PATIENT :"
+            )
+
+            print(
+                f"{type(erreur).__name__}: "
+                f"{erreur}"
+            )
+
+            print(
+                "Le programme continue avec "
+                "les autres patients."
+            )
+
 
 # =========================================================
 # STATISTIQUES
@@ -3097,6 +4052,9 @@ def creer_statistiques() -> dict:
         "syntheses_creees": 0,
         "syntheses_deja_a_jour": 0,
         "syntheses_ignorees": 0,
+        "preparations_creees": 0,
+        "preparations_deja_a_jour": 0,
+        "preparations_ignorees": 0,
         "deja_complets": 0,
         "non_identifies": 0,
         "ambigus": 0,
@@ -3118,6 +4076,10 @@ def creer_statistiques() -> dict:
         "synthese_input_tokens": 0,
         "synthese_output_tokens": 0,
         "synthese_total_tokens": 0,
+
+        "preparation_input_tokens": 0,
+        "preparation_output_tokens": 0,
+        "preparation_total_tokens": 0,
 
         "api_input_tokens": 0,
         "api_output_tokens": 0,
@@ -3161,6 +4123,21 @@ def afficher_resume(
     print(
         f"Synthèses longitudinales ignorées : "
         f"{statistiques['syntheses_ignorees']}"
+    )
+
+    print(
+        f"Préparations de séance créées : "
+        f"{statistiques['preparations_creees']}"
+    )
+
+    print(
+        f"Préparations de séance déjà à jour : "
+        f"{statistiques['preparations_deja_a_jour']}"
+    )
+
+    print(
+        f"Préparations de séance ignorées : "
+        f"{statistiques['preparations_ignorees']}"
     )
 
     print(
@@ -3257,6 +4234,23 @@ def afficher_resume(
     print(
         f"Tokens totaux : "
         f"{statistiques['synthese_total_tokens']}"
+    )
+
+    print("\n--- PRÉPARATION PROCHAINE SÉANCE ---")
+
+    print(
+        f"Tokens d'entrée : "
+        f"{statistiques['preparation_input_tokens']}"
+    )
+
+    print(
+        f"Tokens de sortie : "
+        f"{statistiques['preparation_output_tokens']}"
+    )
+
+    print(
+        f"Tokens totaux : "
+        f"{statistiques['preparation_total_tokens']}"
     )
 
     print("\n--- TOTAL API ---")

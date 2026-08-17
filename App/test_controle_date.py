@@ -54,6 +54,13 @@ class TestControleDateSeance(unittest.TestCase):
             attendue,
         )
 
+        self.assertEqual(
+            extraire_date_nom_fichier(
+                "2026-08-22-PA.jpg"
+            ),
+            attendue,
+        )
+
     def test_date_nom_fichier_absente_ou_impossible(self) -> None:
         for nom in (
             "note_PA.jpg",

@@ -71,6 +71,11 @@ class TestTraitementParLot(unittest.TestCase):
                 "mettre_a_jour_synthese_longitudinale",
                 return_value=False,
             ) as mettre_a_jour,
+            patch.object(
+                app,
+                "mettre_a_jour_preparation_prochaine_seance",
+                return_value=False,
+            ) as preparer,
             patch("builtins.print"),
         ):
             app.traiter_lot_images(
@@ -87,6 +92,16 @@ class TestTraitementParLot(unittest.TestCase):
 
         self.assertEqual(
             patients_synthetises,
+            ["P-A", "P-B"],
+        )
+
+        patients_prepares = [
+            appel.args[0]["identifiant"]
+            for appel in preparer.call_args_list
+        ]
+
+        self.assertEqual(
+            patients_prepares,
             ["P-A", "P-B"],
         )
 
@@ -124,6 +139,11 @@ class TestTraitementParLot(unittest.TestCase):
                 "mettre_a_jour_synthese_longitudinale",
                 return_value=False,
             ) as mettre_a_jour,
+            patch.object(
+                app,
+                "mettre_a_jour_preparation_prochaine_seance",
+                return_value=False,
+            ) as preparer,
             patch("builtins.print"),
         ):
             app.traiter_lot_images(
@@ -138,6 +158,7 @@ class TestTraitementParLot(unittest.TestCase):
             1,
         )
         mettre_a_jour.assert_called_once()
+        preparer.assert_called_once()
 
     def test_tokens_conserves_apres_rejet_deterministe(self) -> None:
         with TemporaryDirectory() as dossier:
