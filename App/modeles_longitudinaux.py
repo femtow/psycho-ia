@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, ClassVar, Literal
 from uuid import uuid4
 import hashlib
@@ -32,6 +32,30 @@ SCHEMA_PROPOSITIONS_LONGITUDINALES = "1.0"
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SOURCE_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
+
+
+def calculer_sha256_octets(contenu: bytes) -> str:
+    """Calcule l'empreinte d'un document a partir de ses octets exacts."""
+
+    return hashlib.sha256(contenu).hexdigest()
+
+
+def serialiser_json_canonique(valeur: JsonValue) -> bytes:
+    """Serialise une valeur JSON selon l'unique convention V1 d'empreinte."""
+
+    return json.dumps(
+        valeur,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def calculer_sha256_json_canonique(valeur: JsonValue) -> str:
+    """Calcule l'empreinte stable d'une valeur JSON decodee."""
+
+    return calculer_sha256_octets(serialiser_json_canonique(valeur))
 
 
 class ModeleStrict(BaseModel):
@@ -225,8 +249,13 @@ class ReferenceSourceV1(ModeleStrict):
     def verifier_chemin_relatif(cls, valeur: str) -> str:
         if "\\" in valeur:
             raise ValueError("Le chemin de source doit utiliser des barres obliques.")
-        chemin = PurePosixPath(valeur)
-        if chemin.is_absolute() or ".." in chemin.parts:
+        chemin_posix = PurePosixPath(valeur)
+        chemin_windows = PureWindowsPath(valeur)
+        if (
+            chemin_posix.is_absolute()
+            or chemin_windows.is_absolute()
+            or ".." in chemin_posix.parts
+        ):
             raise ValueError("Le chemin de source doit rester relatif au dossier patient.")
         return valeur
 
@@ -778,14 +807,7 @@ def creer_reference_source_v1(
         "relation_support": relation_support.value,
         "extraction_schema_version": extraction_schema_version,
     }
-    empreinte = hashlib.sha256(
-        json.dumps(
-            identite,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
+    empreinte = calculer_sha256_json_canonique(identite)
     return ReferenceSourceV1(
         id=f"src_{empreinte[:24]}",
         dossier_id_pseudonymise=dossier_id_pseudonymise,
