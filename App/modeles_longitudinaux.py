@@ -28,7 +28,7 @@ from pydantic import (
 
 
 SCHEMA_REGISTRE_LONGITUDINAL = "1.0"
-SCHEMA_PROPOSITIONS_LONGITUDINALES = "1.0"
+SCHEMA_PROPOSITIONS_LONGITUDINALES = "1.1"
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SOURCE_ID_RE = re.compile(r"^src_[0-9a-f]{24}$")
@@ -593,6 +593,26 @@ class PropositionMiseAJour(ModeleStrict):
         return self
 
 
+class RejetPropositionLongitudinale(ModeleStrict):
+    position_sortie: int = Field(ge=1)
+    type_objet: TypeObjetLongitudinal
+    operation: TypeOperationProposee
+    contenu_principal: str = Field(min_length=1)
+    source_ids_courts: tuple[str, ...] = Field(min_length=1)
+    code: str = Field(min_length=1)
+    motif: str = Field(min_length=1)
+
+    @field_validator("source_ids_courts")
+    @classmethod
+    def verifier_sources_courtes(
+        cls,
+        valeurs: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        if any(not re.fullmatch(r"^source_[0-9]{4}$", valeur) for valeur in valeurs):
+            raise ValueError("Identifiant court de source rejete invalide.")
+        return valeurs
+
+
 class RegistreLongitudinalV1(ModeleStrict):
     schema_version: Literal["1.0"] = SCHEMA_REGISTRE_LONGITUDINAL
     dossier_id_pseudonymise: str = Field(min_length=1)
@@ -679,10 +699,11 @@ class RegistreLongitudinalV1(ModeleStrict):
 
 
 class FichierPropositionsLongitudinalesV1(ModeleStrict):
-    schema_version: Literal["1.0"] = SCHEMA_PROPOSITIONS_LONGITUDINALES
+    schema_version: Literal["1.1"] = SCHEMA_PROPOSITIONS_LONGITUDINALES
     dossier_id_pseudonymise: str = Field(min_length=1)
     statut_documentaire: Literal["brouillon_genere"] = "brouillon_genere"
     propositions: tuple[PropositionMiseAJour, ...]
+    rejets: tuple[RejetPropositionLongitudinale, ...] = ()
 
 
 class ResultatPromotionCreation(ModeleStrict):

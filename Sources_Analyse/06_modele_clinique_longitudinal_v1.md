@@ -255,6 +255,19 @@ Une proposition generee contient :
 
 Une proposition acceptee produit une revision du registre. La proposition elle-meme n'est jamais la source de verite clinique.
 
+La validation post-generation est appliquee proposition par proposition. Le
+fichier de propositions conserve separement les propositions techniquement
+acceptables et les rejets deterministes avec leur motif. Une source invalide ou
+une categorie interdite pour une proposition ne doit pas supprimer les autres
+propositions independantes du meme appel.
+
+Les controles deterministes garantissent la resolution de provenance, les
+categories de support admissibles, les transitions sensibles et la coherence
+des statuts. Ils ne determinent pas a eux seuls qu'un evenement merite un suivi
+longitudinal, qu'une source est semantiquement suffisante ou que deux formulations
+decrivent le meme phenomene. Ces jugements restent encadres par le prompt, puis
+soumis a la validation du clinicien.
+
 ## C. Source de verite et droits de modification
 
 | Objet ou document | Source de verite | Peut creer ou modifier | Peut seulement lire |

@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
-from pydantic import Field, JsonValue, field_validator, model_validator
+from pydantic import Field, JsonValue, ValidationError, field_validator, model_validator
 
 from catalogue_sources_longitudinales import (
     CatalogueSourcesPatientV1,
@@ -26,6 +26,7 @@ from modeles_longitudinaux import (
     ModeleStrict,
     PeriodeCouverte,
     PropositionMiseAJour,
+    RejetPropositionLongitudinale,
     RegistreLongitudinalV1,
     StatutDecisionTache,
     StatutEpistemique,
@@ -45,8 +46,8 @@ from resolution_provenance import (
 MODEL_PROPOSITIONS_LONGITUDINALES = "gpt-5.6-terra"
 REASONING_EFFORT_PROPOSITIONS = "low"
 MAX_OUTPUT_TOKENS_PROPOSITIONS = 6000
-VERSION_PROMPT_PROPOSITIONS = "1.0"
-VERSION_GENERATEUR_PROPOSITIONS = "1.0"
+VERSION_PROMPT_PROPOSITIONS = "1.1"
+VERSION_GENERATEUR_PROPOSITIONS = "1.1"
 
 OPERATIONS_AVEC_LIEN = frozenset(
     {
@@ -64,6 +65,7 @@ CATEGORIES_PROBLEME = frozenset(
         "evitements",
     }
 )
+CATEGORIES_RESULTAT_TACHE = CATEGORIES_PROBLEME
 
 
 PROMPT_SYSTEME_PROPOSITIONS = """\
@@ -88,17 +90,25 @@ Frontiere d'autorite :
 - Retourne une liste vide lorsqu'aucune proposition n'est suffisamment soutenue.
 
 Regles des objets :
-- probleme_suivi : description neutre d'une difficulte documentee. Un
-  regroupement de plusieurs donnees est synthese_prudente. Aucun diagnostic,
+- probleme_suivi : propose seulement une difficulte qui merite un suivi dans le
+  temps. Justifie-le par une repetition, une persistance, un impact fonctionnel,
+  une importance clinique explicite ou un lien explicite avec la demande, un
+  objectif ou le traitement. Une emotion isolee, un evenement ponctuel ou un
+  contenu vague ne suffit pas. Prefere l'absence de proposition si le caractere
+  longitudinal n'est pas soutenu. Un regroupement de plusieurs donnees est
+  synthese_prudente, meme si chaque donnee est explicite. Une formulation reprise
+  directement d'une seule source peut rester explicite. Aucun diagnostic,
   priorite ou causalite inventes.
 - objectif_therapeutique : le schema de seance V2 ne contient pas d'objectif
   negocie distinct. Toute direction plausible est donc seulement
   synthese_prudente et reste a confirmer. Ne transforme jamais une tache, une
-  intervention ou une difficulte seule en objectif convenu.
+  serie de taches, une intervention ou une difficulte seule en objectif.
 - tache_intersession : exige au moins une source de categorie
   taches_interseances. Elle reste proposee_documentee et son resultat reste
-  resultat_non_documente sauf source explicite d'un resultat. Une intervention
-  possible n'est pas une tache.
+  resultat_non_documente sauf source clinique distincte qui documente directement
+  la realisation, la realisation partielle, la non-realisation ou un resultat.
+  Cite alors la consigne et les sources de resultat. Une intervention possible
+  n'est pas une tache et une consigne seule ne prouve jamais sa realisation.
 - element_a_reprendre : seulement un sujet explicitement differe ou une
   incertitude importante a explorer. Une question generee ou un champ simplement
   manquant n'en est pas un.
@@ -419,40 +429,62 @@ def construire_fichier_propositions(
     prompt_sha256 = calculer_sha256_json_canonique(PROMPT_SYSTEME_PROPOSITIONS)
 
     propositions = []
-    for brute in sortie.toutes_les_propositions():
-        entrees = _resoudre_sources_proposition(
-            brute,
-            catalogue,
-            dossier_patient,
-        )
-        _verifier_regles_cliniques(brute, entrees)
-        cible = _verifier_cibles_registre(brute, index_registre, registre)
-        contenu = _construire_contenu_propose(
-            brute,
-            entrees,
-            index_registre,
-        )
-        differences = _construire_differences(brute, contenu, cible)
-        propositions.append(
-            PropositionMiseAJour(
-                id=generer_identifiant_proposition(),
-                type_objet=brute.type_objet,
-                operation=brute.operation,
-                objet_cible_id=brute.objet_cible_id,
-                version_objet_cible=brute.version_objet_cible,
-                contenu_propose=contenu,
-                differences=differences,
-                justification=brute.justification,
-                source_ids=tuple(entree.reference.id for entree in entrees),
-                statuts_epistemiques=(brute.statut_epistemique,),
-                cree_le=date_creation,
-                modele=MODEL_PROPOSITIONS_LONGITUDINALES,
-                version_prompt=VERSION_PROMPT_PROPOSITIONS,
-                version_generateur=VERSION_GENERATEUR_PROPOSITIONS,
-                prompt_sha256=prompt_sha256,
-                empreinte_sources_sha256=empreinte_generation,
+    rejets = []
+    for position, brute_initiale in enumerate(
+        sortie.toutes_les_propositions(),
+        start=1,
+    ):
+        try:
+            brute = type(brute_initiale).model_validate(
+                brute_initiale.model_dump(mode="python")
             )
-        )
+            entrees = _resoudre_sources_proposition(
+                brute,
+                catalogue,
+                dossier_patient,
+            )
+            _verifier_regles_cliniques(brute, entrees)
+            cible = _verifier_cibles_registre(brute, index_registre, registre)
+            contenu = _construire_contenu_propose(
+                brute,
+                entrees,
+                index_registre,
+            )
+            differences = _construire_differences(brute, contenu, cible)
+            propositions.append(
+                PropositionMiseAJour(
+                    id=generer_identifiant_proposition(),
+                    type_objet=brute.type_objet,
+                    operation=brute.operation,
+                    objet_cible_id=brute.objet_cible_id,
+                    version_objet_cible=brute.version_objet_cible,
+                    contenu_propose=contenu,
+                    differences=differences,
+                    justification=brute.justification,
+                    source_ids=tuple(entree.reference.id for entree in entrees),
+                    statuts_epistemiques=(brute.statut_epistemique,),
+                    cree_le=date_creation,
+                    modele=MODEL_PROPOSITIONS_LONGITUDINALES,
+                    version_prompt=VERSION_PROMPT_PROPOSITIONS,
+                    version_generateur=VERSION_GENERATEUR_PROPOSITIONS,
+                    prompt_sha256=prompt_sha256,
+                    empreinte_sources_sha256=empreinte_generation,
+                )
+            )
+        except ValidationPostTerraEchouee as erreur:
+            rejets.append(
+                _creer_rejet_proposition(position, brute_initiale, erreur)
+            )
+        except ValidationError:
+            rejets.append(
+                _creer_rejet_proposition(
+                    position,
+                    brute_initiale,
+                    ValidationPostTerraEchouee(
+                        "La proposition ne respecte pas le schema deterministe."
+                    ),
+                )
+            )
 
     if _empreinte_registre(registre) != empreinte_registre_avant:
         raise RegistreGenerationIncoherent(
@@ -461,6 +493,23 @@ def construire_fichier_propositions(
     return FichierPropositionsLongitudinalesV1(
         dossier_id_pseudonymise=catalogue.dossier_id_pseudonymise,
         propositions=tuple(propositions),
+        rejets=tuple(rejets),
+    )
+
+
+def _creer_rejet_proposition(
+    position: int,
+    brute: PropositionTerra,
+    erreur: ValidationPostTerraEchouee,
+) -> RejetPropositionLongitudinale:
+    return RejetPropositionLongitudinale(
+        position_sortie=position,
+        type_objet=brute.type_objet,
+        operation=brute.operation,
+        contenu_principal=_contenu_principal(brute),
+        source_ids_courts=brute.source_ids,
+        code=erreur.code,
+        motif=str(erreur),
     )
 
 
@@ -470,7 +519,7 @@ def calculer_empreinte_generation(
 ) -> str:
     return calculer_sha256_json_canonique(
         {
-            "schema_propositions": "1.0",
+            "schema_propositions": "1.1",
             "version_generateur": VERSION_GENERATEUR_PROPOSITIONS,
             "version_prompt": VERSION_PROMPT_PROPOSITIONS,
             "modele": MODEL_PROPOSITIONS_LONGITUDINALES,
@@ -631,6 +680,13 @@ def _verifier_regles_cliniques(
             raise ValidationPostTerraEchouee(
                 "Un probleme doit etre soutenu par des donnees cliniques directes."
             )
+        if (
+            len(entrees) > 1
+            and brute.statut_epistemique is StatutEpistemique.EXPLICITE
+        ):
+            raise ValidationPostTerraEchouee(
+                "Un regroupement de plusieurs sources doit rester une synthese prudente."
+            )
         if brute.statut_epistemique not in {
             StatutEpistemique.EXPLICITE,
             StatutEpistemique.SYNTHESE_PRUDENTE,
@@ -648,7 +704,12 @@ def _verifier_regles_cliniques(
                 "Une intervention ou tache seule ne peut devenir un objectif."
             )
     elif isinstance(brute, PropositionTacheTerra):
-        if "taches_interseances" not in categories:
+        entrees_consigne = tuple(
+            entree
+            for entree in entrees
+            if entree.categorie == "taches_interseances"
+        )
+        if not entrees_consigne:
             raise ValidationPostTerraEchouee(
                 "Une tache exige une source taches_interseances."
             )
@@ -656,7 +717,7 @@ def _verifier_regles_cliniques(
             raise ValidationPostTerraEchouee(
                 "Une tache documentee doit rester explicite."
             )
-        dates_sources = {entree.date_seance for entree in entrees}
+        dates_sources = {entree.date_seance for entree in entrees_consigne}
         if (
             brute.date_proposition_ou_accord is not None
             and brute.date_proposition_ou_accord not in dates_sources
@@ -664,6 +725,15 @@ def _verifier_regles_cliniques(
             raise ValidationPostTerraEchouee(
                 "La date de proposition de tache n'est pas une date source."
             )
+        if (
+            brute.operation is TypeOperationProposee.CREATION
+            and brute.statut_decision_propose
+            not in {None, StatutDecisionTache.PROPOSEE_DOCUMENTEE}
+        ):
+            raise ValidationPostTerraEchouee(
+                "Une creation de tache V2 reste proposee_documentee."
+            )
+        _verifier_sources_resultat_tache(brute, entrees)
     elif isinstance(brute, PropositionElementTerra):
         autorises = {
             StatutEpistemique.EXPLICITE,
@@ -679,6 +749,49 @@ def _verifier_regles_cliniques(
             "Les hypotheses cliniques sont hors perimetre de cette brique."
         )
     _verifier_transition_sensible(brute, categories)
+
+
+def _verifier_sources_resultat_tache(
+    brute: PropositionTacheTerra,
+    entrees: tuple[EntreeCatalogueSourceV1, ...],
+) -> None:
+    statut = brute.statut_resultat_propose
+    resultat_documente = brute.resultat_documente
+    resultat_atteste = statut not in {
+        None,
+        StatutResultatTache.RESULTAT_NON_DOCUMENTE,
+    }
+    entrees_resultat = tuple(
+        entree
+        for entree in entrees
+        if entree.categorie in CATEGORIES_RESULTAT_TACHE
+    )
+
+    if statut is StatutResultatTache.RESULTAT_NON_DOCUMENTE:
+        if resultat_documente is not None:
+            raise ValidationPostTerraEchouee(
+                "Un resultat non documente ne peut contenir de resultat."
+            )
+    elif resultat_atteste and resultat_documente is None:
+        raise ValidationPostTerraEchouee(
+            "Un statut de resultat exige un resultat documente."
+        )
+    elif statut is None and resultat_documente is not None:
+        raise ValidationPostTerraEchouee(
+            "Un resultat documente exige un statut de resultat."
+        )
+
+    if (resultat_atteste or resultat_documente is not None) and not entrees_resultat:
+        raise ValidationPostTerraEchouee(
+            "Un resultat de tache exige une source clinique directe distincte de la consigne."
+        )
+    if (
+        brute.cycle_propose is CycleTache.CLOSE
+        and not resultat_atteste
+    ):
+        raise ValidationPostTerraEchouee(
+            "Une tache ne peut etre close sans resultat documente."
+        )
 
 
 def _verifier_transition_sensible(
@@ -843,6 +956,22 @@ def _construire_contenu_propose(
             index_registre,
             "objectif_therapeutique",
         )
+        entrees_consigne = tuple(
+            entree
+            for entree in entrees
+            if entree.categorie == "taches_interseances"
+        )
+        entrees_resultat = tuple(
+            entree
+            for entree in entrees
+            if entree.categorie in CATEGORIES_RESULTAT_TACHE
+        )
+        source_ids_consigne = tuple(
+            entree.reference.id for entree in entrees_consigne
+        )
+        source_ids_resultat = tuple(
+            entree.reference.id for entree in entrees_resultat
+        )
         if brute.operation is TypeOperationProposee.CHANGEMENT_ETAT:
             contenu = {}
             if brute.cycle_propose is not None:
@@ -855,23 +984,42 @@ def _construire_contenu_propose(
                 contenu["resultat_documente"] = _creer_assertion(
                     brute.resultat_documente,
                     StatutEpistemique.EXPLICITE,
-                    source_ids,
-                    entrees,
+                    source_ids_resultat,
+                    entrees_resultat,
                 ).model_dump(mode="json")
             _verifier_coherence_resultat_tache(contenu)
             return contenu
         contenu = {}
         if brute.consigne is not None:
-            contenu["consigne"] = assertion.model_dump(mode="json")
+            contenu["consigne"] = _creer_assertion(
+                brute.consigne,
+                StatutEpistemique.EXPLICITE,
+                source_ids_consigne,
+                entrees_consigne,
+            ).model_dump(mode="json")
         if brute.date_proposition_ou_accord is not None:
             contenu["date_proposition_ou_accord"] = (
                 brute.date_proposition_ou_accord.isoformat()
             )
         if brute.operation is TypeOperationProposee.CREATION:
-            return {
-                "cycle": "ouverte",
+            statut_resultat = (
+                brute.statut_resultat_propose
+                or StatutResultatTache.RESULTAT_NON_DOCUMENTE
+            )
+            resultat_documente = None
+            if brute.resultat_documente is not None:
+                resultat_documente = _creer_assertion(
+                    brute.resultat_documente,
+                    StatutEpistemique.EXPLICITE,
+                    source_ids_resultat,
+                    entrees_resultat,
+                ).model_dump(mode="json")
+            creation = {
+                "cycle": (
+                    brute.cycle_propose or CycleTache.OUVERTE
+                ).value,
                 "statut_decision": "proposee_documentee",
-                "statut_resultat": "resultat_non_documente",
+                "statut_resultat": statut_resultat.value,
                 "consigne": contenu["consigne"],
                 "probleme_ids": list(brute.probleme_ids),
                 "objectif_ids": list(brute.objectif_ids),
@@ -882,13 +1030,15 @@ def _construire_contenu_propose(
                     "date_proposition_ou_accord"
                 ],
                 "echeance": None,
-                "resultat_documente": None,
+                "resultat_documente": resultat_documente,
                 "apprentissages": [],
                 "effets_indesirables": [],
                 "obstacles": [],
                 "decision_suite": None,
                 "relations": [],
             }
+            _verifier_coherence_resultat_tache(creation)
+            return creation
         return contenu
 
     if isinstance(brute, PropositionElementTerra):

@@ -22,7 +22,6 @@ from generation_propositions_longitudinales import (
     PropositionTacheTerra,
     ReponseTerraInvalide,
     SortieTerraPropositionsV1,
-    ValidationPostTerraEchouee,
     calculer_empreinte_generation,
     construire_fichier_propositions,
     generer_propositions_longitudinales,
@@ -150,6 +149,244 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
             cree_le=self.cree_le,
         )
 
+    def _assert_rejet_unique(self, sortie, motif: str | None = None):
+        fichier = self._construire(sortie)
+        self.assertEqual(fichier.propositions, ())
+        self.assertEqual(len(fichier.rejets), 1)
+        if motif is not None:
+            self.assertIn(motif, fichier.rejets[0].motif)
+        return fichier.rejets[0]
+
+    def _ajouter_seance_resultat(self, **categories):
+        document = {
+            "schema_version": "2.0",
+            "date_seance": "2026-08-15",
+            "faits_rapportes": [],
+            "emotions": [],
+            "cognitions": [],
+            "comportements": [],
+            "evitements": [],
+            "interventions": [],
+            "taches_interseances": [],
+            "elements_incertains": [],
+        }
+        document.update(categories)
+        chemin = self.dossier_clinique / "seance_resultat.json"
+        chemin.write_text(
+            json.dumps(document, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        self.catalogue = construire_catalogue_sources_patient(
+            self.dossier_patient,
+            self.dossier_id,
+        )
+        return {
+            entree.categorie: entree.source_id
+            for entree in self.catalogue.entrees
+            if entree.date_seance == date(2026, 8, 15)
+        }
+
+    def test_validation_partielle_conserve_trois_propositions_valides(self) -> None:
+        sortie = SortieTerraPropositionsV1(
+            problemes_suivis=(
+                PropositionProblemeTerra(
+                    operation="creation",
+                    statut_epistemique="explicite",
+                    source_ids=("source_0001",),
+                    justification="Difficulte directement documentee.",
+                    libelle="Difficulte fictive.",
+                ),
+                PropositionProblemeTerra(
+                    operation="creation",
+                    statut_epistemique="explicite",
+                    source_ids=("source_0003",),
+                    justification="Source inadmissible pour un probleme.",
+                    libelle="Probleme invalide.",
+                ),
+            ),
+            objectifs_therapeutiques=(
+                PropositionObjectifTerra(
+                    operation="creation",
+                    statut_epistemique="synthese_prudente",
+                    source_ids=("source_0001",),
+                    justification="Direction a confirmer.",
+                    formulation="Clarifier une direction de changement.",
+                    type_objectif="resultat",
+                ),
+            ),
+            taches_intersession=(
+                PropositionTacheTerra(
+                    operation="creation",
+                    statut_epistemique="explicite",
+                    source_ids=("source_0004",),
+                    justification="Tache documentee.",
+                    consigne="Tache fictive proposee.",
+                    date_proposition_ou_accord=date(2026, 8, 8),
+                ),
+            ),
+        )
+
+        fichier = self._construire(sortie)
+
+        self.assertEqual(len(fichier.propositions), 3)
+        self.assertEqual(len(fichier.rejets), 1)
+        self.assertEqual(fichier.rejets[0].position_sortie, 2)
+        self.assertIn("donnees cliniques directes", fichier.rejets[0].motif)
+
+    def test_tache_realisee_conserve_resultat_et_sources_separees(self) -> None:
+        sources = self._ajouter_seance_resultat(
+            comportements=[
+                {
+                    "contenu": "A realise la tache fictive.",
+                    "contexte": "Cette semaine.",
+                }
+            ]
+        )
+        sortie = SortieTerraPropositionsV1(
+            taches_intersession=(
+                PropositionTacheTerra(
+                    operation="creation",
+                    statut_epistemique="explicite",
+                    source_ids=("source_0004", sources["comportements"]),
+                    justification="Consigne et realisation documentees.",
+                    consigne="Tache fictive proposee.",
+                    date_proposition_ou_accord=date(2026, 8, 8),
+                    cycle_propose="close",
+                    statut_decision_propose="proposee_documentee",
+                    statut_resultat_propose="realisee",
+                    resultat_documente="La tache fictive a ete realisee.",
+                ),
+            )
+        )
+
+        contenu = self._construire(sortie).propositions[0].contenu_propose
+
+        self.assertEqual(contenu["cycle"], "close")
+        self.assertEqual(contenu["statut_decision"], "proposee_documentee")
+        self.assertEqual(contenu["statut_resultat"], "realisee")
+        self.assertEqual(
+            contenu["resultat_documente"]["contenu"],
+            "La tache fictive a ete realisee.",
+        )
+        self.assertNotEqual(
+            contenu["consigne"]["source_ids"],
+            contenu["resultat_documente"]["source_ids"],
+        )
+
+    def test_tache_partielle_conserve_resultat(self) -> None:
+        sources = self._ajouter_seance_resultat(
+            evitements=[
+                {
+                    "contenu": "A interrompu une partie de la tache fictive.",
+                    "contexte": "Lors de la troisieme tentative.",
+                }
+            ]
+        )
+        sortie = SortieTerraPropositionsV1(
+            taches_intersession=(
+                PropositionTacheTerra(
+                    operation="creation",
+                    statut_epistemique="explicite",
+                    source_ids=("source_0004", sources["evitements"]),
+                    justification="Realisation partielle documentee.",
+                    consigne="Tache fictive proposee.",
+                    date_proposition_ou_accord=date(2026, 8, 8),
+                    cycle_propose="close",
+                    statut_resultat_propose="partielle",
+                    resultat_documente="La tache a ete partiellement realisee.",
+                ),
+            )
+        )
+
+        contenu = self._construire(sortie).propositions[0].contenu_propose
+
+        self.assertEqual(contenu["statut_resultat"], "partielle")
+        self.assertIsNotNone(contenu["resultat_documente"])
+
+    def test_faux_resultat_sans_source_clinique_est_rejete(self) -> None:
+        sortie = SortieTerraPropositionsV1(
+            taches_intersession=(
+                PropositionTacheTerra(
+                    operation="creation",
+                    statut_epistemique="explicite",
+                    source_ids=("source_0004",),
+                    justification="Resultat non soutenu.",
+                    consigne="Tache fictive proposee.",
+                    date_proposition_ou_accord=date(2026, 8, 8),
+                    cycle_propose="close",
+                    statut_resultat_propose="realisee",
+                    resultat_documente="La tache aurait ete realisee.",
+                ),
+            )
+        )
+
+        self._assert_rejet_unique(sortie, "source clinique directe distincte")
+
+    def test_regroupement_multisource_exige_synthese_prudente(self) -> None:
+        explicite = SortieTerraPropositionsV1(
+            problemes_suivis=(
+                PropositionProblemeTerra(
+                    operation="creation",
+                    statut_epistemique="explicite",
+                    source_ids=("source_0001", "source_0002"),
+                    justification="Regroupement de deux donnees.",
+                    libelle="Difficulte fictive regroupee.",
+                ),
+            )
+        )
+        prudente = SortieTerraPropositionsV1(
+            problemes_suivis=(
+                PropositionProblemeTerra(
+                    operation="creation",
+                    statut_epistemique="synthese_prudente",
+                    source_ids=("source_0001", "source_0002"),
+                    justification="Regroupement prudent de deux donnees.",
+                    libelle="Difficulte fictive regroupee.",
+                ),
+            )
+        )
+
+        self._assert_rejet_unique(explicite, "plusieurs sources")
+        fichier = self._construire(prudente)
+        self.assertEqual(len(fichier.propositions), 1)
+        self.assertEqual(fichier.rejets, ())
+
+    def test_observation_unique_reste_candidate_et_peut_etre_proposee(self) -> None:
+        sortie = SortieTerraPropositionsV1(
+            problemes_suivis=(
+                PropositionProblemeTerra(
+                    operation="creation",
+                    statut_epistemique="explicite",
+                    source_ids=("source_0001",),
+                    justification="Impact longitudinal explicitement documente.",
+                    libelle="Difficulte unique mais importante.",
+                    etat_propose="actif",
+                ),
+            )
+        )
+
+        contenu = self._construire(sortie).propositions[0].contenu_propose
+
+        self.assertEqual(contenu["etat"], "candidat")
+
+    def test_evenement_ponctuel_ne_devient_pas_actif_automatiquement(self) -> None:
+        sortie = SortieTerraPropositionsV1(
+            problemes_suivis=(
+                PropositionProblemeTerra(
+                    operation="creation",
+                    statut_epistemique="explicite",
+                    source_ids=("source_0002",),
+                    justification="Emotion isolee.",
+                    libelle="Emotion fictive isolee.",
+                    etat_propose="actif",
+                ),
+            )
+        )
+
+        contenu = self._construire(sortie).propositions[0].contenu_propose
+
+        self.assertEqual(contenu["etat"], "candidat")
+
     def test_conversion_des_quatre_types(self) -> None:
         fichier = self._construire()
 
@@ -204,8 +441,7 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
             )
         )
 
-        with self.assertRaises(ValidationPostTerraEchouee):
-            self._construire(sortie)
+        self._assert_rejet_unique(sortie, "inconnu")
 
     def test_reference_obsolete_refusee_apres_terra(self) -> None:
         self.document["faits_rapportes"][0] = "Fait fictif modifie."
@@ -262,8 +498,7 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
             )
         )
 
-        with self.assertRaises(ValidationPostTerraEchouee):
-            self._construire(sortie)
+        self._assert_rejet_unique(sortie, "donnees cliniques directes")
 
     def test_objectif_v2_ne_peut_pas_devenir_explicite(self) -> None:
         sortie = SortieTerraPropositionsV1(
@@ -279,8 +514,7 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
             )
         )
 
-        with self.assertRaises(ValidationPostTerraEchouee):
-            self._construire(sortie)
+        self._assert_rejet_unique(sortie, "synthese prudente")
 
     def test_intervention_ou_tache_seule_ne_devient_pas_objectif(self) -> None:
         sortie = SortieTerraPropositionsV1(
@@ -296,8 +530,7 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
             )
         )
 
-        with self.assertRaises(ValidationPostTerraEchouee):
-            self._construire(sortie)
+        self._assert_rejet_unique(sortie, "tache seule")
 
     def test_tache_sans_categorie_tache_refusee(self) -> None:
         sortie = SortieTerraPropositionsV1(
@@ -313,8 +546,7 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
             )
         )
 
-        with self.assertRaises(ValidationPostTerraEchouee):
-            self._construire(sortie)
+        self._assert_rejet_unique(sortie, "source taches_interseances")
 
     def test_source_incertaine_ne_devient_pas_fait_explicite(self) -> None:
         sortie = SortieTerraPropositionsV1(
@@ -329,8 +561,7 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
             )
         )
 
-        with self.assertRaises(ValidationPostTerraEchouee):
-            self._construire(sortie)
+        self._assert_rejet_unique(sortie, "source incertaine")
 
     def test_date_de_tache_inventee_refusee(self) -> None:
         sortie = SortieTerraPropositionsV1(
@@ -346,8 +577,7 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
             )
         )
 
-        with self.assertRaises(ValidationPostTerraEchouee):
-            self._construire(sortie)
+        self._assert_rejet_unique(sortie, "date source")
 
     def test_resolution_ne_peut_pas_reposer_sur_une_synthese(self) -> None:
         sortie = SortieTerraPropositionsV1(
@@ -364,8 +594,7 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
             )
         )
 
-        with self.assertRaises(ValidationPostTerraEchouee):
-            self._construire(sortie)
+        self._assert_rejet_unique(sortie, "donnee explicite source")
 
     def test_serialisation_ne_promeut_pas_les_propositions(self) -> None:
         fichier = self._construire()
@@ -451,15 +680,16 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
         )
         client = FauxClient(reponse)
 
-        with self.assertRaises(ValidationPostTerraEchouee) as capture:
-            generer_propositions_longitudinales(
-                client,
-                self.catalogue,
-                self.dossier_patient,
-            )
+        fichier, retour = generer_propositions_longitudinales(
+            client,
+            self.catalogue,
+            self.dossier_patient,
+        )
 
-        self.assertIs(capture.exception.reponse, reponse)
-        self.assertEqual(capture.exception.reponse.usage.total_tokens, 25)
+        self.assertIs(retour, reponse)
+        self.assertEqual(retour.usage.total_tokens, 25)
+        self.assertEqual(fichier.propositions, ())
+        self.assertEqual(len(fichier.rejets), 1)
 
     def test_sortie_vide_valide_et_ne_modifie_aucun_registre(self) -> None:
         validation = ValidationClinique(
