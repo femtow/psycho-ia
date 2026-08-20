@@ -120,6 +120,24 @@ CATEGORIES_CLINIQUES_V2 = frozenset(
 )
 
 
+def valider_document_clinique_v2(
+    document: dict[str, JsonValue],
+) -> date:
+    """Valide un document V2 complet et retourne sa date obligatoire."""
+
+    try:
+        document_valide = _DocumentCliniqueV2.model_validate(document)
+    except ValidationError as erreur:
+        raise DocumentCliniqueInvalide(
+            "Le document ne respecte pas le contrat clinique V2."
+        ) from erreur
+    if document_valide.date_seance is None:
+        raise DocumentCliniqueInvalide(
+            "Le document clinique ne contient pas de date de seance."
+        )
+    return document_valide.date_seance
+
+
 class SourceResolueV1(ModeleStrict):
     reference_id: str
     dossier_id_pseudonymise: str
