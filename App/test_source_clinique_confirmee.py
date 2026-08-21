@@ -15,6 +15,7 @@ from source_clinique_confirmee import (
     StatutSourceCliniqueV1,
     calculer_sha256_octets,
     charger_provenance_json,
+    enregistrer_provenance_json_depuis_source_confirmee,
     enregistrer_provenance_json_produite,
 )
 
@@ -271,6 +272,57 @@ class TestSourceCliniqueConfirmee(unittest.TestCase):
         provenance = charger_provenance_json(chemin)
         self.assertFalse(provenance.assertions_json_validees_individuellement)
         self.assertIsNone(provenance.confirmation_id)
+
+    def test_json_regenere_lie_exactement_a_correction_confirmee(self) -> None:
+        service = self.creer_service()
+        resultat = service.corriger_et_confirmer(
+            self.texte_machine + "Correction clinique.\n",
+            clinicien_id="clinicien-fictif",
+            confirmation_explicite=True,
+            accepter_incertitudes=True,
+            instant=datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc),
+        )
+        json_path = self.dossier_json / "2026-08-22-PA.json"
+        json_path.write_text(
+            '{"schema_version":"2.0","date_seance":"2026-08-22"}',
+            encoding="utf-8",
+        )
+        chemin_version = self.dossier_patient / Path(
+            service._charger_dossier().versions[-1].document_courant
+        )
+        chemin = enregistrer_provenance_json_depuis_source_confirmee(
+            service,
+            json_path,
+            calculer_sha256_octets(chemin_version.read_bytes()),
+        )
+        provenance = charger_provenance_json(chemin)
+        self.assertEqual(provenance.confirmation_id, resultat.confirmation.id)
+        self.assertEqual(
+            provenance.transcription_sha256,
+            resultat.confirmation.transcription_sha256,
+        )
+        self.assertTrue(service.verifier_autorite().json_clinique_lie)
+        self.assertFalse(provenance.assertions_json_validees_individuellement)
+
+    def test_liaison_refuse_une_empreinte_non_utilisee(self) -> None:
+        service = self.creer_service()
+        service.corriger_et_confirmer(
+            self.texte_machine + "Correction clinique.\n",
+            clinicien_id="clinicien-fictif",
+            confirmation_explicite=True,
+            accepter_incertitudes=True,
+        )
+        json_path = self.dossier_json / "2026-08-22-PA.json"
+        json_path.write_text(
+            '{"schema_version":"2.0","date_seance":"2026-08-22"}',
+            encoding="utf-8",
+        )
+        with self.assertRaises(SourceCliniqueInvalide):
+            enregistrer_provenance_json_depuis_source_confirmee(
+                service,
+                json_path,
+                "0" * 64,
+            )
 
 
 if __name__ == "__main__":

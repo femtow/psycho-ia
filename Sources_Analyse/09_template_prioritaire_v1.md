@@ -52,7 +52,7 @@ Ce document teste la chaine complete sans attendre une infrastructure supplement
 note fictive
 -> transcription confirmee
 -> JSON clinique V2
--> candidat episode
+-> episode explicitement selectionne par le clinicien
 -> extraction des composants proches de la source
 -> hypothese fonctionnelle separee
 -> document stable
@@ -65,7 +65,7 @@ note fictive
 
 **SOURCE BIBLIOGRAPHIQUE.** Cottraux decrit SECCA comme une grille didactique et pratique reliant `Stimulus`, `Emotion`, `Cognition`, `Comportement` et `Anticipation`. Sa partie synchronique analyse une sequence actuelle et ses relations avec l'entourage ; sa partie diachronique organise l'histoire. Source : Cottraux, *Les psychotherapies cognitives et comportementales*, 6e ed., chapitre 6, pp. 98-106, EPUB consulte directement.
 
-**CONSEQUENCE.** Psycho IA ne doit pas appeler « SECCA » une grille qui ajouterait ou renommerait librement ses composants. Une vue SECCA peut etre produite uniquement si les donnees canoniques permettent de renseigner ses dimensions sans les forcer.
+**CONSEQUENCE.** Psycho IA ne doit pas appeler « SECCA » une grille qui ajouterait ou renommerait librement ses composants. Une eventuelle vue SECCA ulterieure ne pourra etre produite que si les donnees canoniques permettent de renseigner ses dimensions sans les forcer ; elle est hors V1.
 
 ### 3.2 Analyse micro d'un probleme
 
@@ -75,9 +75,11 @@ note fictive
 
 ### 3.3 ABC, SORC et analyses comportementales
 
-**SOURCE BIBLIOGRAPHIQUE.** L'analyse interne `01_cartographie_clinique.md`, section 5, rapporte que Persons examine les antecedents et consequences d'un comportement defini, y compris les reponses privees, et que la fonction doit etre determinee empiriquement. Elle rapporte aussi qu'Eells distingue relations predictives, force, direction, causalite supposee et modifiabilite. Cottraux presente SORC, SECCA et d'autres grilles comme des representations possibles de la meme tache clinique.
+**SOURCES BIBLIOGRAPHIQUES VERIFIEES DIRECTEMENT.** Persons definit l'analyse fonctionnelle a partir d'un comportement cible precis, de ses antecedents et de ses consequences, en incluant les cognitions, emotions, sensations physiologiques, comportements et evenements externes dans la chaine. Elle insiste sur la contingence des consequences et sur la verification empirique de la fonction. Source : Persons, *The Case Formulation Approach to Cognitive-Behavior Therapy*, sections sur l'analyse fonctionnelle et la chaine comportementale, pp. 57-59 et 75-79 du PDF.
 
-**LIMITE DE VERIFICATION.** Les fichiers de Persons et Eells ne sont pas presents dans `Sources/` pendant cette mission ; ces apports proviennent donc des analyses locales anterieures, et non d'une nouvelle lecture directe.
+Eells decrit les relations fonctionnelles comme observationnelles et predictives plutot que necessairement causales, et l'analyse fonctionnelle comme iterative et autocorrective. Source : Eells, *Handbook of Psychotherapy Case Formulation*, chapitre consacre a la formulation comportementale et a l'analyse fonctionnelle, pp. 336-349 du PDF.
+
+Kuyken, Padesky et Dudley recommandent de construire l'explication synchronique a partir de plusieurs exemples specifiques, de comparer les hypotheses aux donnees de la personne et de les verifier par des observations ulterieures, tout en recherchant aussi les exceptions et ressources. Source : Kuyken, Padesky et Dudley, *Collaborative Case Conceptualization*, sections sur les conceptualisations transversales et leur evaluation, pp. 191-208 et 234-235 du PDF.
 
 ### 3.4 Synthese retenue
 
@@ -95,12 +97,12 @@ Ce noyau n'impose ni que toute emotion soit causee par une cognition, ni que tou
 
 ### 3.5 Choix Psycho IA
 
-**CHOIX DE CONCEPTION PSYCHO IA.** Le contenu canonique n'est ni une grille SECCA modifiee ni un formulaire ABC rigide. Il utilise des rubriques neutres capables de produire, si utile :
+**CHOIX DE CONCEPTION PSYCHO IA.** Le contenu canonique n'est ni une grille SECCA modifiee ni un formulaire ABC rigide. La V1 produit uniquement une vue clinique Psycho IA. Des vues derivees pourront etre etudiees dans une version ulterieure, sans ajouter de donnees absentes :
 
-- une vue principale Psycho IA, orientee lecture clinique ;
-- une vue ABC simplifiee : antecedents, comportement/reponse cible, consequences ;
-- une vue SECCA conditionnelle, sans ajouter de donnees absentes ;
-- plus tard, une carte fonctionnelle plus complexe si elle change reellement la decision.
+- une vue principale Psycho IA, orientee lecture clinique, en V1 ;
+- eventuellement plus tard, une vue ABC simplifiee ;
+- eventuellement plus tard, une vue SECCA fidele ;
+- plus tard seulement, une carte fonctionnelle plus complexe si elle change reellement la decision.
 
 Les vues ne creent pas de copies independantes de l'analyse.
 
@@ -288,7 +290,7 @@ Sous-rubriques exactes :
 6. `donnees_en_defaveur_ou_limites` ;
 7. `hypotheses_alternatives` ;
 8. `prediction_testable` ;
-9. `confiance_qualitative` facultative : faible, moderee ou elevee, jamais numerique.
+La V1 ne produit aucun score ni niveau qualitatif de confiance. La solidite de l'hypothese reste lisible dans les donnees en faveur, les limites, les alternatives et la prediction testable.
 
 **Regles obligatoires.**
 
@@ -401,8 +403,8 @@ Une date de seance seule n'est pas une provenance suffisante.
 ### 8.1 Sequence obligatoire
 
 1. verifier l'admissibilite et la fraicheur des sources ;
-2. identifier un ou plusieurs candidats episodes ;
-3. choisir ou faire confirmer un seul episode ;
+2. recevoir du clinicien une source et une description breve de l'episode explicitement selectionne ;
+3. verifier que les composants produits restent limites a cet episode ;
 4. extraire les composants directement documentes ;
 5. ordonner sans inventer les liens temporels ;
 6. rechercher consequences immediates et differees dans les sources admissibles ;
@@ -415,7 +417,7 @@ Une date de seance seule n'est pas une provenance suffisante.
 
 ### 8.2 Selection de l'episode
 
-Recommandation V1 : le systeme propose au maximum trois candidats, chacun avec date, description et raison de selection. Le clinicien confirme un candidat ou delimite manuellement l'episode. Une proposition non confirmee reste un brouillon et ne devient pas preuve consolidee.
+Regle V1 : le clinicien selectionne explicitement le patient, la seance ou source, et decrit brievement l'episode a analyser. Le systeme ne detecte, ne classe et ne propose aucun candidat episode. Si la delimitation fournie ne suffit pas, la generation reste descriptive ou est refusee ; elle ne fusionne pas des occurrences voisines.
 
 ### 8.3 Regroupement autorise
 
@@ -487,7 +489,7 @@ Ne pas afficher un code technique seul. La provenance detaillee conserve le type
 3. distinguer variation reelle, correction, difference d'informateur et contradiction non resolue ;
 4. ne jamais choisir arbitrairement une version ;
 5. limiter la synthese aux elements non contradictoires ;
-6. si la contradiction modifie la fonction, retirer l'hypothese ou la presenter comme faible ;
+6. si la contradiction modifie la fonction, retirer l'hypothese ou rendre explicitement visibles ses limites et alternatives ;
 7. transformer la contradiction en question clinique seulement si sa resolution peut modifier une decision.
 
 ## 12. Presentation clinique
@@ -514,9 +516,9 @@ Les listes courtes sont preferees aux paragraphes. Les formulations sources util
 - provenance technique hors corps principal ;
 - aucun paragraphe generique de conclusion.
 
-### 12.3 Variante ABC
+### 12.3 Variante ABC - hors V1
 
-Vue facultative, generee a partir des memes champs :
+Cette vue n'est pas generee en V1. Une version ulterieure pourra la deriver des memes champs :
 
 - A : contexte et antecedents ;
 - B : reponse cible et autres reponses ;
@@ -524,9 +526,9 @@ Vue facultative, generee a partir des memes champs :
 
 La fonction supposee reste sous la grille, comme hypothese separee.
 
-### 12.4 Variante SECCA
+### 12.4 Variante SECCA - hors V1
 
-Vue facultative seulement si elle aide le clinicien :
+Cette vue n'est pas generee en V1. Une version ulterieure pourra l'etudier seulement si elle aide le clinicien :
 
 - Stimulus ;
 - Emotion ;
@@ -657,7 +659,7 @@ Correctif : documenter le soulagement ; presenter le maintien comme hypothese et
 
 Mauvais : appeler SECCA une grille qui remplace Anticipation par Consequence et ajoute des cases arbitraires.
 
-Correctif : conserver le template canonique Psycho IA et offrir une vue SECCA fidele lorsque pertinente.
+Correctif : conserver le template canonique Psycho IA et reserver une eventuelle vue SECCA fidele a une version ulterieure.
 
 ### 15.6 Intervention automatique
 
@@ -675,7 +677,7 @@ Correctif : laisser la rubrique de comprehension partagee vide jusqu'a une discu
 
 Mauvais : score numerique de confiance ou causalite forte issue d'une note breve.
 
-Correctif : confiance qualitative facultative, preuves visibles et abstention autorisee.
+Correctif : aucun niveau de confiance en V1 ; preuves, limites, alternatives et abstention restent visibles.
 
 ## 16. Tests cliniques necessaires a la future implementation
 
@@ -704,7 +706,7 @@ Necessaires :
 - sources cliniques fictives confirmees et versionnees ;
 - acces au JSON V2 et a la transcription correspondante ;
 - reference atomique par composant ;
-- selection ou confirmation d'un candidat episode ;
+- selection explicite par le clinicien du patient, de la source et de l'episode ;
 - statut documentaire distinct du statut epistemique ;
 - rendu stable et controles deterministes ;
 - empreinte incluant sources et version du generateur/template.

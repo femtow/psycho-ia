@@ -649,6 +649,70 @@ def enregistrer_provenance_json_produite(
     return chemin
 
 
+def enregistrer_provenance_json_depuis_source_confirmee(
+    service: ServiceSourceCliniqueConfirmeeV1,
+    json_path: Path,
+    transcription_sha256_utilisee: str,
+) -> Path:
+    """Lie un JSON nouvellement genere a la version confirmee exactement utilisee."""
+
+    etat = service.verifier_autorite()
+    if not etat.est_confirmee or etat.confirmation_id is None:
+        raise SourceCliniqueInvalide(
+            "La version courante de la transcription n'est pas confirmee."
+        )
+    dossier = service._charger_dossier()
+    if dossier is None:
+        raise SourceCliniqueInvalide("Le dossier de source confirmee est absent.")
+    version = dossier.versions[-1]
+    confirmation = _confirmation_version_courante(dossier)
+    if confirmation is None or confirmation.id != etat.confirmation_id:
+        raise SourceCliniqueInvalide(
+            "La confirmation courante ne peut pas etre resolue."
+        )
+    transcription_courante = _resoudre_document(
+        version.document_courant,
+        service.dossier_patient,
+    )
+    empreinte_courante = calculer_sha256_octets(
+        transcription_courante.read_bytes()
+    )
+    if (
+        transcription_sha256_utilisee != empreinte_courante
+        or confirmation.transcription_sha256 != empreinte_courante
+    ):
+        raise SourceCliniqueInvalide(
+            "Le JSON n'a pas ete genere depuis la version confirmee courante."
+        )
+    json_resolu = _valider_json_clinique(
+        json_path,
+        service.dossier_patient,
+        service.date_seance,
+    )
+    provenance = ProvenanceJsonCliniqueV1(
+        dossier_id_pseudonymise=service.dossier_id_pseudonymise,
+        date_seance=service.date_seance,
+        json_clinique=_chemin_relatif(json_resolu, service.dossier_patient),
+        json_sha256=calculer_sha256_octets(json_resolu.read_bytes()),
+        transcription=_chemin_relatif(
+            transcription_courante,
+            service.dossier_patient,
+        ),
+        transcription_sha256=empreinte_courante,
+        confirmation_source=_chemin_relatif(
+            service.chemin_dossier_source,
+            service.dossier_patient,
+        ),
+        confirmation_id=confirmation.id,
+    )
+    _ecrire_atomique(
+        service.chemin_provenance_json,
+        _serialiser_modele(provenance),
+        os.replace,
+    )
+    return service.chemin_provenance_json
+
+
 def charger_provenance_json(chemin: Path) -> ProvenanceJsonCliniqueV1:
     return ProvenanceJsonCliniqueV1.model_validate_json(chemin.read_bytes())
 
