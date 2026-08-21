@@ -19,6 +19,8 @@ from PIL import Image, ImageFilter, ImageOps
 from pillow_heif import register_heif_opener
 from pydantic import BaseModel, ConfigDict, Field
 
+from source_clinique_confirmee import enregistrer_provenance_json_produite
+
 
 # =========================================================
 # HEIC / HEIF
@@ -3859,6 +3861,14 @@ def traiter_image(
 
         enregistrer_donnees_cliniques(
             donnees,
+            json_path,
+        )
+
+        enregistrer_provenance_json_produite(
+            patient["dossier"],
+            patient["identifiant"],
+            date_attendue,
+            transcription_path,
             json_path,
         )
 

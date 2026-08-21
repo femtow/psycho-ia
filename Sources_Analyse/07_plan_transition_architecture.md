@@ -154,6 +154,30 @@ uniquement d'adaptateur de test et propose un smoke test sur une copie
 temporaire d'un dossier fictif. Les mises a jour d'objets deja valides restent
 hors perimetre de cette V1.
 
+### Phase 4 bis - Confirmer la source au niveau de la seance
+
+**But :** eviter de demander au clinicien de revalider chaque representation
+informatique d'un contenu deja documente.
+
+Implementation V1 :
+
+- `source_clinique_confirmee.py` conserve la version machine, les corrections,
+  les confirmations et leurs empreintes exactes ;
+- l'autorite est reverifiee contre le patient, la seance, le chemin, l'existence
+  du fichier et son SHA-256 ;
+- une correction produit une version distincte et ne devient autoritative
+  qu'apres confirmation ;
+- `[illisible]` et `[mot incertain : ...]` restent visibles et ne sont jamais
+  completes automatiquement ;
+- la provenance du JSON est stockee dans un sidecar distinct qui indique qu'il
+  s'agit d'une transformation machine et non d'une validation champ par champ ;
+- `source_clinique_cli.py` fournit uniquement une revue globale de la
+  transcription sur une copie temporaire fictive.
+
+Critere de sortie : une source confirmee reste reconnue apres rechargement et
+devient obsolete des que la version confirmee change. Aucun objet longitudinal
+n'est encore cree ou modifie automatiquement.
+
 ### Phase 5 - Initialiser prudemment les dossiers fictifs existants
 
 **But :** tester la migration sur l'historique actuel sans produire de fausse completude.

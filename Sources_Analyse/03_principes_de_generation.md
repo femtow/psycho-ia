@@ -348,6 +348,25 @@ Trois états documentaires doivent rester distincts :
 
 Une correction après promotion conserve l'ancienne version et son motif. Une hypothèse détaillée utile en interne n'est pas automatiquement adaptée à une sortie patient ou tierce.
 
+### 16.1 Confirmation de la source clinique
+
+La validite technique d'un fichier ne constitue pas une confirmation humaine.
+Une transcription non vide et un JSON conforme au schema restent des productions
+machine tant qu'aucun acte clinique explicite n'est lie a leur version exacte.
+
+La confirmation V1 porte sur l'ensemble de la transcription d'une seance : le
+clinicien confirme qu'elle correspond suffisamment a sa note pour etre utilisee
+par Psycho IA. Elle est liee a une empreinte SHA-256, a un patient pseudonymise,
+a une date de seance et a une version. Une modification ulterieure rend cette
+confirmation obsolete. Une correction conserve la version machine, l'avant et
+l'apres, puis exige la confirmation de la nouvelle version.
+
+Un JSON clinique peut indiquer qu'il derive d'une transcription confirmee. Cette
+relation ne signifie jamais que chaque categorie ou assertion du JSON a ete
+validee individuellement. Les marqueurs `[illisible]` et
+`[mot incertain : ...]` peuvent rester dans une transcription confirmee, mais ne
+peuvent etre reconstruits automatiquement comme faits certains.
+
 ## 17. Contrôle qualité final
 
 Avant de rendre un document, vérifier :

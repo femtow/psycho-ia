@@ -674,6 +674,20 @@ Les propositions generees sont conservees dans une structure distincte et refere
 
 **Recommandation :** option A pour la V1. Le systeme peut pre-remplir une file de candidats, mais le registre valide reste distinct.
 
+#### Fondation ajoutee avant la validation par exception
+
+`Source clinique confirmee V1` distingue maintenant la transcription produite,
+la transcription confirmee, la transcription corrigee puis confirmee et une
+confirmation devenue obsolete. L'autorite est calculee depuis le fichier, sa
+version et son empreinte ; elle ne repose pas sur un booleen stocke.
+
+Cette fondation ne modifie pas encore le registre longitudinal. Elle prepare une
+revision ulterieure de l'arbitrage : une representation fidele issue d'une source
+confirmee pourra etre integree sans validation objet par objet, tandis qu'une
+synthese, une hypothese ou une decision continuera d'exiger le controle adapte.
+Le sidecar de provenance du JSON porte explicitement
+`assertions_json_validees_individuellement: false`.
+
 ### Arbitrage 2 - Fonctionnement de la preparation pendant la transition
 
 **Probleme :** le registre sera incomplet au debut, alors que la preparation V1 actuelle fonctionne deja.
