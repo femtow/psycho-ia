@@ -21,6 +21,7 @@ from generation_propositions_longitudinales import (
     PropositionProblemeTerra,
     PropositionTacheTerra,
     ReponseTerraInvalide,
+    RevueTacheTerra,
     SortieTerraPropositionsV1,
     calculer_empreinte_generation,
     construire_fichier_propositions,
@@ -320,7 +321,7 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
             )
         )
 
-        self._assert_rejet_unique(sortie, "source clinique directe distincte")
+        self._assert_rejet_unique(sortie, "preuve admissible de realisation")
 
     def test_regroupement_multisource_exige_synthese_prudente(self) -> None:
         explicite = SortieTerraPropositionsV1(
@@ -609,9 +610,22 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
         )
 
     def test_appel_terra_recoit_uniquement_vue_clinique_et_source_ids(self) -> None:
+        sortie = self._sortie_quatre_types().model_copy(
+            update={
+                "taches_intersession": (),
+                "revues_taches": (
+                    RevueTacheTerra(
+                        task_id="task_0001",
+                        source_consigne_id="source_0004",
+                        statut_resultat_propose="resultat_non_documente",
+                        justification="Aucun retour explicite documente.",
+                    ),
+                ),
+            }
+        )
         reponse = SimpleNamespace(
             status="completed",
-            output_parsed=self._sortie_quatre_types(),
+            output_parsed=sortie,
             usage=SimpleNamespace(input_tokens=100, output_tokens=40, total_tokens=140),
         )
         client = FauxClient(reponse)
@@ -671,7 +685,15 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
                     justification="Justification fictive.",
                     libelle="Probleme fictif.",
                 ),
-            )
+            ),
+            revues_taches=(
+                RevueTacheTerra(
+                    task_id="task_0001",
+                    source_consigne_id="source_0004",
+                    statut_resultat_propose="resultat_non_documente",
+                    justification="Aucun retour explicite documente.",
+                ),
+            ),
         )
         reponse = SimpleNamespace(
             status="completed",
@@ -688,7 +710,11 @@ class TestGenerationPropositionsLongitudinales(unittest.TestCase):
 
         self.assertIs(retour, reponse)
         self.assertEqual(retour.usage.total_tokens, 25)
-        self.assertEqual(fichier.propositions, ())
+        self.assertEqual(len(fichier.propositions), 1)
+        self.assertEqual(
+            fichier.propositions[0].type_objet.value,
+            "tache_intersession",
+        )
         self.assertEqual(len(fichier.rejets), 1)
 
     def test_sortie_vide_valide_et_ne_modifie_aucun_registre(self) -> None:

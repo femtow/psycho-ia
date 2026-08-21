@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Literal
+import re
 
 from pydantic import Field, JsonValue, ValidationError, field_validator, model_validator
 
@@ -46,8 +47,8 @@ from resolution_provenance import (
 MODEL_PROPOSITIONS_LONGITUDINALES = "gpt-5.6-terra"
 REASONING_EFFORT_PROPOSITIONS = "low"
 MAX_OUTPUT_TOKENS_PROPOSITIONS = 6000
-VERSION_PROMPT_PROPOSITIONS = "1.1"
-VERSION_GENERATEUR_PROPOSITIONS = "1.1"
+VERSION_PROMPT_PROPOSITIONS = "1.2"
+VERSION_GENERATEUR_PROPOSITIONS = "1.2"
 
 OPERATIONS_AVEC_LIEN = frozenset(
     {
@@ -65,7 +66,16 @@ CATEGORIES_PROBLEME = frozenset(
         "evitements",
     }
 )
-CATEGORIES_RESULTAT_TACHE = CATEGORIES_PROBLEME
+CATEGORIES_PREUVE_REALISATION_TACHE = frozenset(
+    {
+        "faits_rapportes",
+        "comportements",
+        "evitements",
+    }
+)
+CATEGORIES_REPONSE_CLINIQUE_TACHE = CATEGORIES_PROBLEME
+CATEGORIES_RESULTAT_TACHE = CATEGORIES_PREUVE_REALISATION_TACHE
+TASK_ID_RE = re.compile(r"^task_[0-9]{4,}$")
 
 
 PROMPT_SYSTEME_PROPOSITIONS = """\
@@ -103,12 +113,17 @@ Regles des objets :
   negocie distinct. Toute direction plausible est donc seulement
   synthese_prudente et reste a confirmer. Ne transforme jamais une tache, une
   serie de taches, une intervention ou une difficulte seule en objectif.
-- tache_intersession : exige au moins une source de categorie
-  taches_interseances. Elle reste proposee_documentee et son resultat reste
-  resultat_non_documente sauf source clinique distincte qui documente directement
-  la realisation, la realisation partielle, la non-realisation ou un resultat.
-  Cite alors la consigne et les sources de resultat. Une intervention possible
-  n'est pas une tache et une consigne seule ne prouve jamais sa realisation.
+- tache_intersession : n'en cree aucune librement dans taches_intersession.
+  Examine exactement une fois chaque tache de revue_taches_attendues et retourne
+  exactement une entree revues_taches par task_id, dans le meme ordre. L'identite,
+  la consigne, sa source et sa date sont imposees par l'entree recue. Cite comme
+  source_ids_realisation seulement des faits_rapportes, comportements ou
+  evitements posterieurs qui documentent directement la realisation, la
+  realisation partielle ou la non-realisation de cette consigne precise. Une
+  emotion, une cognition, une baisse d'anxiete, une intervention ou une nouvelle
+  tache ne prouve pas la realisation. N'interchange pas des prescriptions proches
+  par leur duree, quantite ou contexte. Sans preuve explicite apres examen,
+  retourne resultat_non_documente sans texte ni source de realisation.
 - element_a_reprendre : seulement un sujet explicitement differe ou une
   incertitude importante a explorer. Une question generee ou un champ simplement
   manquant n'en est pas un.
@@ -330,6 +345,66 @@ class PropositionElementTerra(PropositionTerraBase):
         return self
 
 
+class RevueTacheTerra(ModeleStrict):
+    """Decision semantique Terra pour une tache deja identifiee par le code."""
+
+    task_id: str
+    source_consigne_id: str
+    statut_resultat_propose: StatutResultatTache
+    realisation_documentee: str | None = Field(default=None, min_length=1)
+    source_ids_realisation: tuple[str, ...] = ()
+    justification: str = Field(min_length=1)
+
+    @field_validator("task_id")
+    @classmethod
+    def verifier_task_id(cls, valeur: str) -> str:
+        if not TASK_ID_RE.fullmatch(valeur):
+            raise ValueError("Identifiant interne de tache invalide.")
+        return valeur
+
+    @field_validator("source_consigne_id")
+    @classmethod
+    def verifier_source_consigne(cls, valeur: str) -> str:
+        if not SOURCE_CATALOGUE_RE.fullmatch(valeur):
+            raise ValueError("Identifiant de source de consigne invalide.")
+        return valeur
+
+    @field_validator("source_ids_realisation")
+    @classmethod
+    def verifier_sources_realisation(
+        cls,
+        valeurs: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        if len(valeurs) != len(set(valeurs)):
+            raise ValueError("Une revue ne doit pas dupliquer une source.")
+        for valeur in valeurs:
+            if not SOURCE_CATALOGUE_RE.fullmatch(valeur):
+                raise ValueError("Identifiant de source de realisation invalide.")
+        return valeurs
+
+    @model_validator(mode="after")
+    def verifier_coherence_resultat(self) -> RevueTacheTerra:
+        non_documente = (
+            self.statut_resultat_propose
+            is StatutResultatTache.RESULTAT_NON_DOCUMENTE
+        )
+        if non_documente and (
+            self.realisation_documentee is not None
+            or self.source_ids_realisation
+        ):
+            raise ValueError(
+                "Un resultat non documente ne peut citer ni texte ni source."
+            )
+        if not non_documente and (
+            self.realisation_documentee is None
+            or not self.source_ids_realisation
+        ):
+            raise ValueError(
+                "Un resultat documente exige un texte et au moins une source."
+            )
+        return self
+
+
 PropositionTerra = (
     PropositionProblemeTerra
     | PropositionObjectifTerra
@@ -342,6 +417,7 @@ class SortieTerraPropositionsV1(ModeleStrict):
     problemes_suivis: tuple[PropositionProblemeTerra, ...] = ()
     objectifs_therapeutiques: tuple[PropositionObjectifTerra, ...] = ()
     taches_intersession: tuple[PropositionTacheTerra, ...] = ()
+    revues_taches: tuple[RevueTacheTerra, ...] = ()
     elements_a_reprendre: tuple[PropositionElementTerra, ...] = ()
 
     def toutes_les_propositions(self) -> tuple[PropositionTerra, ...]:
@@ -364,7 +440,12 @@ def generer_propositions_longitudinales(
 
     verifier_catalogue_resoluble(catalogue, dossier_patient)
     _verifier_registre(registre, catalogue)
-    prompt_utilisateur = _construire_prompt_utilisateur(catalogue, registre)
+    plan_revue_taches = construire_plan_revue_taches(catalogue)
+    prompt_utilisateur = _construire_prompt_utilisateur(
+        catalogue,
+        registre,
+        plan_revue_taches,
+    )
     reponse = client.responses.parse(
         model=MODEL_PROPOSITIONS_LONGITUDINALES,
         reasoning={"effort": REASONING_EFFORT_PROPOSITIONS},
@@ -389,6 +470,11 @@ def generer_propositions_longitudinales(
             reponse,
         )
     try:
+        sortie = integrer_revues_taches(
+            sortie,
+            catalogue,
+            plan_revue_taches,
+        )
         fichier = construire_fichier_propositions(
             sortie,
             catalogue,
@@ -534,13 +620,121 @@ def calculer_empreinte_generation(
     )
 
 
+def construire_plan_revue_taches(
+    catalogue: CatalogueSourcesPatientV1,
+) -> tuple[dict[str, JsonValue], ...]:
+    """Enumere chaque prescription et ses seules sources cliniques posterieures."""
+
+    taches = tuple(
+        entree
+        for entree in catalogue.entrees
+        if entree.categorie == "taches_interseances"
+    )
+    plan = []
+    for position, tache in enumerate(taches, start=1):
+        sources_posterieures = [
+            entree.vue_terra()
+            for entree in catalogue.entrees
+            if entree.date_seance > tache.date_seance
+            and entree.categorie in CATEGORIES_REPONSE_CLINIQUE_TACHE
+        ]
+        plan.append(
+            {
+                "task_id": f"task_{position:04d}",
+                "source_consigne_id": tache.source_id,
+                "date_tache": tache.date_seance.isoformat(),
+                "consigne_exacte": tache.contenu,
+                "sources_cliniques_posterieures": sources_posterieures,
+            }
+        )
+    return tuple(plan)
+
+
+def integrer_revues_taches(
+    sortie: SortieTerraPropositionsV1,
+    catalogue: CatalogueSourcesPatientV1,
+    plan_revue_taches: tuple[dict[str, JsonValue], ...] | None = None,
+) -> SortieTerraPropositionsV1:
+    """Valide l'exhaustivite puis ancre les revues aux taches deterministes."""
+
+    plan = plan_revue_taches or construire_plan_revue_taches(catalogue)
+    if sortie.taches_intersession:
+        raise ReponseTerraInvalide(
+            "Terra ne doit pas creer librement de taches intersession."
+        )
+
+    attendus = [str(tache["task_id"]) for tache in plan]
+    recus = [revue.task_id for revue in sortie.revues_taches]
+    if len(recus) != len(set(recus)):
+        raise ReponseTerraInvalide(
+            "Chaque task_id doit apparaitre exactement une fois dans la revue."
+        )
+    if set(recus) != set(attendus) or len(recus) != len(attendus):
+        manquants = sorted(set(attendus) - set(recus))
+        inconnus = sorted(set(recus) - set(attendus))
+        raise ReponseTerraInvalide(
+            "Revue des taches incomplete ou inconnue. "
+            f"Manquants : {manquants}; inconnus : {inconnus}."
+        )
+
+    revues_par_id = {revue.task_id: revue for revue in sortie.revues_taches}
+    propositions = []
+    for tache in plan:
+        task_id = str(tache["task_id"])
+        revue = revues_par_id[task_id]
+        source_consigne_id = str(tache["source_consigne_id"])
+        if revue.source_consigne_id != source_consigne_id:
+            raise ReponseTerraInvalide(
+                f"La source de consigne de {task_id} ne correspond pas au plan."
+            )
+        source_ids = (source_consigne_id, *revue.source_ids_realisation)
+        if len(source_ids) != len(set(source_ids)):
+            raise ReponseTerraInvalide(
+                f"La revue {task_id} confond consigne et source de realisation."
+            )
+        statut_documente = (
+            revue.statut_resultat_propose
+            is not StatutResultatTache.RESULTAT_NON_DOCUMENTE
+        )
+        propositions.append(
+            PropositionTacheTerra(
+                operation=TypeOperationProposee.CREATION,
+                statut_epistemique=StatutEpistemique.EXPLICITE,
+                source_ids=source_ids,
+                justification=revue.justification,
+                consigne=str(tache["consigne_exacte"]),
+                date_proposition_ou_accord=date.fromisoformat(
+                    str(tache["date_tache"])
+                ),
+                cycle_propose=(
+                    CycleTache.CLOSE if statut_documente else CycleTache.OUVERTE
+                ),
+                statut_decision_propose=(
+                    StatutDecisionTache.PROPOSEE_DOCUMENTEE
+                ),
+                statut_resultat_propose=revue.statut_resultat_propose,
+                resultat_documente=revue.realisation_documentee,
+            )
+        )
+
+    return sortie.model_copy(
+        update={"taches_intersession": tuple(propositions)}
+    )
+
+
 def _construire_prompt_utilisateur(
     catalogue: CatalogueSourcesPatientV1,
     registre: RegistreLongitudinalV1 | None,
+    plan_revue_taches: tuple[dict[str, JsonValue], ...] | None = None,
 ) -> str:
     donnees = {
         "catalogue_clinique": catalogue.vue_terra(),
         "registre_courant": _vue_registre_terra(registre),
+        "revue_taches_attendues": (
+            plan_revue_taches
+            if plan_revue_taches is not None
+            else construire_plan_revue_taches(catalogue)
+        ),
     }
     return (
         "Voici les seules donnees autorisees. Le champ registre_courant vaut "
@@ -766,6 +960,26 @@ def _verifier_sources_resultat_tache(
         for entree in entrees
         if entree.categorie in CATEGORIES_RESULTAT_TACHE
     )
+    entrees_consigne = tuple(
+        entree
+        for entree in entrees
+        if entree.categorie == "taches_interseances"
+    )
+
+    if len(entrees_consigne) != 1:
+        raise ValidationPostTerraEchouee(
+            "Une revue de tache exige exactement une source de consigne."
+        )
+    date_tache = entrees_consigne[0].date_seance
+    if brute.date_proposition_ou_accord != date_tache:
+        raise ValidationPostTerraEchouee(
+            "La date de la tache doit correspondre exactement a sa consigne."
+        )
+    entrees_hors_consigne = tuple(
+        entree
+        for entree in entrees
+        if entree.categorie != "taches_interseances"
+    )
 
     if statut is StatutResultatTache.RESULTAT_NON_DOCUMENTE:
         if resultat_documente is not None:
@@ -781,9 +995,20 @@ def _verifier_sources_resultat_tache(
             "Un resultat documente exige un statut de resultat."
         )
 
+    if any(
+        entree.categorie not in CATEGORIES_PREUVE_REALISATION_TACHE
+        for entree in entrees_hors_consigne
+    ):
+        raise ValidationPostTerraEchouee(
+            "Une source de reponse clinique ne prouve pas la realisation de la tache."
+        )
     if (resultat_atteste or resultat_documente is not None) and not entrees_resultat:
         raise ValidationPostTerraEchouee(
-            "Un resultat de tache exige une source clinique directe distincte de la consigne."
+            "Un resultat de tache exige une preuve admissible de realisation."
+        )
+    if any(entree.date_seance <= date_tache for entree in entrees_resultat):
+        raise ValidationPostTerraEchouee(
+            "Une source de realisation doit etre strictement posterieure a la tache."
         )
     if (
         brute.cycle_propose is CycleTache.CLOSE

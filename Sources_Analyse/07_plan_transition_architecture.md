@@ -146,6 +146,14 @@ Une interface en ligne de commande ou un petit outil local peut suffire pour la 
 
 Critere de sortie : creation et mise a jour reelles des quatre registres possibles sans intervention manuelle dans le JSON brut.
 
+Implementation V1 : le service `validation_clinicien_longitudinale.py` couvre
+uniquement les creations. Il conserve proposition, decision et registre dans
+trois couches distinctes, revalide la provenance avant promotion et interdit
+les doubles decisions terminales. La CLI `validation_clinicien_cli.py` sert
+uniquement d'adaptateur de test et propose un smoke test sur une copie
+temporaire d'un dossier fictif. Les mises a jour d'objets deja valides restent
+hors perimetre de cette V1.
+
 ### Phase 5 - Initialiser prudemment les dossiers fictifs existants
 
 **But :** tester la migration sur l'historique actuel sans produire de fausse completude.

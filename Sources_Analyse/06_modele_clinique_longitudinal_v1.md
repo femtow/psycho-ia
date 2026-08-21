@@ -268,6 +268,53 @@ longitudinal, qu'une source est semantiquement suffisante ou que deux formulatio
 decrivent le meme phenomene. Ces jugements restent encadres par le prompt, puis
 soumis a la validation du clinicien.
 
+#### Revue task-centric des taches V1
+
+Avant l'appel Terra, le generateur enumere deterministement chaque entree
+`taches_interseances` dans l'ordre du catalogue et lui attribue un identifiant
+interne `task_####`. Chaque entree de revue contient la source de consigne, sa
+date, sa formulation exacte et les seules sources cliniques strictement
+posterieures. La reponse doit contenir exactement une revue pour chaque
+identifiant attendu ; omission, doublon ou identifiant inconnu invalide la
+reponse complete.
+
+Terra effectue uniquement l'association semantique entre une prescription et
+son retour. Le code conserve l'identite de la prescription et controle la
+chronologie, la provenance et les categories. `faits_rapportes`,
+`comportements` et `evitements` peuvent soutenir une realisation, une
+realisation partielle ou une non-realisation. `emotions` et `cognitions`
+peuvent decrire une reponse clinique, mais ne prouvent pas l'execution ; une
+`intervention` ou une nouvelle `taches_interseances` ne la prouve jamais.
+Sans preuve explicite admissible apres revue, le statut reste
+`resultat_non_documente`.
+
+La version du prompt et celle du generateur passent a `1.2`, car ce contrat
+d'appel devient exhaustif et task-centric. Le schema persistant des
+propositions reste en `1.1` : aucun champ du fichier enregistre n'est modifie.
+
+#### Validation clinicien V1
+
+La validation des propositions de creation est une operation deterministe et
+hors ligne. Une decision identifie une proposition par l'empreinte exacte de
+son fichier d'origine et son identifiant `prop_...`. La proposition originale
+reste immuable. Les decisions `accepter`, `modifier_puis_accepter`, `refuser`
+et `differer` sont conservees dans un fichier distinct du registre ; seules les
+deux premieres peuvent appeler explicitement le mecanisme de promotion.
+
+Juste avant une promotion, le service recharge les propositions, le registre
+et les decisions, compare l'empreinte affichee et la version du registre, puis
+resout de nouveau chaque `ReferenceSourceV1`. Toute divergence de patient,
+empreinte, source ou version bloque la promotion sans reparation automatique.
+Les decisions terminales ne peuvent pas etre repetees ; `differer` reste
+neutre et non terminal.
+
+La modification V1 porte uniquement sur l'assertion clinique principale :
+`libelle`, `formulation`, `consigne` ou `contenu` selon le type d'objet. Elle ne
+peut changer ni le type, ni les sources, ni les identifiants, ni les champs
+techniques. Le clinicien confirme separement que les sources soutiennent encore
+la formulation, le statut epistemique final et la promotion. La compatibilite
+semantique de la reformulation reste une responsabilite clinique humaine.
+
 ## C. Source de verite et droits de modification
 
 | Objet ou document | Source de verite | Peut creer ou modifier | Peut seulement lire |
